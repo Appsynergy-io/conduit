@@ -1,147 +1,130 @@
-# Conduit by AppSynergy — OpenAPI 3.1.1 Specification
+# Conduit CE — Community Edition
 
-Complete REST API specification for the Conduit remote infrastructure management platform.
+Secure remote access to every machine. No SSH keys. No VPNs. No inbound ports.
 
-## Overview
+Conduit CE is a self-hosted remote infrastructure management platform. A single Go binary gives you browser-based shell access, file management, and real-time visibility into every machine you manage — authenticated with passkeys, encrypted with PQC hybrid TLS, and connected over QUIC.
 
-Conduit gives operators secure, instant shell access to any machine — without opening inbound ports, managing SSH keys, VPNs, or trusting the network. Every managed machine runs a lightweight agent that connects outbound to the Conduit master server. Operators authenticate with passkeys and have a full terminal, file manager, and management dashboard in seconds.
+This is the open foundation that the full Conduit SaaS platform is built on.
 
-This spec defines every API endpoint for the `conduit-server` binary.
+---
 
-## Spec Details
+## What It Does
 
-| | |
+- **Remote shell** — Full PTY terminal in the browser (xterm.js) or TUI (bubbletea). Works like SSH, without SSH.
+- **File manager** — Browse directories, upload, download, delete, rename, mkdir on any connected machine.
+- **Zero inbound ports** — Agents connect outbound only. Works behind NAT, CGNAT, corporate firewalls, dynamic IPs.
+- **QUIC + WebSocket** — QUIC primary transport with automatic WebSocket fallback when UDP is blocked.
+- **Passkey auth** — WebAuthn passkeys are the sole production authentication. No passwords to rotate.
+- **SAML/OIDC SSO** — Integrate with your existing identity provider. Passkeys remain primary.
+- **RBAC** — Full role hierarchy: platform_owner, org_owner, org_admin, org_member. Users, groups, permissions.
+- **PQC hybrid TLS** — X25519MLKEM768 post-quantum key exchange on every connection Conduit controls.
+- **Let's Encrypt TLS** — Automatic certificate provisioning. TLS 1.3 only.
+- **Agent enrollment** — Join tokens with label scoping. One command installs and starts the agent as a service.
+- **Multi-OS agents** — Linux (systemd), macOS (launchd), Windows (service). amd64 + arm64.
+- **Real-time dashboard** — Agent status, connections, and events stream live via WebSocket EventBus. No polling.
+- **Audit logging** — Every access event logged: who, what, when, where, outcome. Append-only, immutable.
+- **Webhooks** — HMAC-SHA256 signed payloads on audit events. Subscription management with delivery history.
+- **Bulk exec** — Run commands across multiple agents in parallel with streaming output.
+- **Terminal recording** — Session recording and playback (asciicast v2).
+- **Agent auto-update** — Signed binary push from server to all agents.
+
+## Architecture
+
+```
+┌────────────────────────────────────────────────────┐
+│              conduit-server (single Go binary)      │
+│                                                    │
+│  QUIC Listener ─── HTTP/3 + HTTP/2 ─── embed.FS   │
+│  (agent conns)     (browser + API)     (Next.js    │
+│                                        dashboard + │
+│                                        promo site) │
+│                                                    │
+│  Auth: WebAuthn / SAML / OIDC (prod)               │
+│        Password (dev mode only)                    │
+│  JWT: Ed25519    SQLite    Let's Encrypt            │
+│  TLS: X25519MLKEM768 PQC hybrid                    │
+└────────────────────────────────────────────────────┘
+       ▲ QUIC/WSS                  ▲ HTTPS + WSS
+       │                           │
+  ┌────┴─────┐               ┌────┴─────┐
+  │  Agent   │               │ Browser  │
+  │ (conduit)│               │ Dashboard│
+  │ service  │               └──────────┘
+  └──────────┘
+       ┌──────────┐
+       │   TUI    │
+       │ (conduit)│
+       │bubbletea │
+       └──────────┘
+```
+
+**Two binaries:**
+
+| Binary | Purpose |
 |---|---|
-| **OpenAPI Version** | 3.1.1 (latest, full JSON Schema 2020-12 alignment) |
-| **File** | `openapi.yaml` |
-| **Lines** | ~10,100 |
-| **Endpoints** | 150 paths |
-| **Schemas** | 85 component schemas |
-| **Webhooks** | 8 event types |
-| **Tags** | 32 domain groups |
-| **Error Format** | RFC 9457 Problem Details (`application/problem+json`) |
-| **Pagination** | Cursor-based |
-| **Auth** | JWT (Ed25519), WebAuthn, HMAC-SHA256 agent tokens, CI tokens |
+| `conduit-server` | Master server. QUIC + HTTP listeners, API, auth, SQLite, embedded frontend. |
+| `conduit` | Agent (daemon), CLI, and interactive TUI. Single binary, multiple modes. |
 
-## API Domain Coverage
+## Quick Start
 
-### Server Core
-- Health check and server status
-- Setup wizard (first-run, localhost-only)
-- Server configuration (`server.yaml`)
-- ACME/TLS certificate management (Let's Encrypt)
-- White-label branding
-- Cluster management (single node or join via token)
-- Multi-master federation
+### 1. Start the Server
 
-### Auth & Identity
-- WebAuthn passkey registration and login (AAL3)
-- Temporary password login (setup/dev only, Argon2id)
-- JWT token refresh and revocation (Ed25519 signed)
-- CLI browser-based device flow
-- CI/automation tokens (scoped, revocable)
-- SAML and OIDC SSO providers
-- PIV / smart card authentication
-- Session visibility and revocation (web, CLI, CI, iOS)
+```bash
+# Production — runs setup wizard, obtains Let's Encrypt cert
+./conduit-server
 
-### Users, Groups & RBAC
-- User CRUD, suspend/reinstate, invitation flow
-- Group management with membership
-- Role-based access control (platform_owner, org_owner, org_admin, org_member)
-- Permission listing and role assignments
+# Dev mode — self-signed cert on port 8443
+./conduit-server --dev
+```
 
-### Multi-Tenancy & Billing
-- Tenant CRUD, self-service signup (SaaS mode)
-- Sub-tenant creation with visibility modes (full, aggregate, opaque)
-- Sub-tenant resource allocation enforcement
-- Plan builder (admin creates all plans from scratch, no hardcoded tiers)
-- Dynamic feature registry (migration-driven toggles)
-- Stripe billing integration (subscriptions, portal, invoices, usage)
+First run launches the setup wizard on `localhost:8080`. Enter your domain, admin email, and a temporary password. The server obtains a TLS cert, restarts on port 443, and forces you to register a passkey. The temporary password is deleted permanently after.
 
-### Agents & Connections
-- Agent registration with single-use and persistent join tokens
-- Agent CRUD, labels, group assignments
-- System metrics (CPU, RAM, disk, network time-series)
-- Agent auto-update (SLH-DSA-SHA2-256s signed binaries)
-- Reboot/poweroff (lights-out basic)
-- BMC/IPMI out-of-band management (Redfish, iDRAC, iLO, AMT, DASH)
-- WebSocket agent connection endpoint (CWP protocol)
-- Universal resource labelling system
+### 2. Enroll an Agent
 
-### Shell & Terminal
-- Shell session lifecycle (create, terminate, list)
-- WebSocket bidirectional I/O (xterm.js compatible)
-- Terminal resize (CWP SHELL_RESIZE)
-- Session recording and playback (asciicast v2)
+Generate a join token from the dashboard or CLI:
 
-### File Management
-- Directory listing, file preview
-- Upload (with resumable support), download
-- Delete, rename, mkdir
-- All transfers over HTTPS/QUIC (no SFTP dependency)
+```bash
+conduit token create --labels env=production,role=web --type persistent --ttl 24h
+```
 
-### Bulk Operations
-- Multi-server parallel command execution with streaming WebSocket output
-- Binary deployment service with post-deploy commands
+On the target machine:
 
-### Serial & Hardware
-- Serial port listing (USB-to-serial, direct)
-- Serial console sessions with WebSocket I/O
-- Automated OS installation over serial interface
+```bash
+conduit join https://conduit.example.com <token>
+```
 
-### Legacy SSH
-- SSH connection profiles (stored credentials, host key verification)
-- SSH sessions through agents
-- SFTP file operations (list, download, upload)
+This single command:
+- Validates the token with the server
+- Receives a unique agent identity (UUID + HMAC-SHA256 key)
+- Applies the labels from the token
+- Installs the binary and writes config
+- Installs and starts a system service (systemd / launchd / Windows service)
+- Connects to the server immediately
 
-### Kubernetes / k3s
-- Cluster listing and details
-- Namespaces, pods, deployments, services, nodes
-- kubectl command execution via agent
+### 3. Use It
 
-### PXE / iPXE Provisioning
-- OS profile builder (disk layout, network, packages, post-install scripts)
-- iPXE boot provisioning with auto-enrollment
-- Provisioning job tracking
+**Browser:** Open `https://conduit.example.com`, authenticate with your passkey, click an agent, drop into a terminal.
 
-### Vault (Secrets & Key Management)
-- Secrets CRUD (AES-256-GCM encrypted at rest)
-- Shamir Secret Sharing initialization and unseal
-- TPM-sealed per-node secret delivery
+**TUI:** Run `conduit` with no arguments for an interactive agent list. Press Enter to shell in.
 
-### PKI (Certificate Management)
-- Root and intermediate CA creation
-- Certificate issuance (server, client, user, code-signing)
-- Certificate revocation with reason codes
-- Certificate download (PEM, DER, PKCS12)
-- CRL distribution endpoint
-- OCSP responder
+**CLI:** `conduit shell <agent-name>` for a direct connection.
 
-### Object Storage
-- Per-tenant storage bucket (files, scripts, binaries, artifacts)
-- Upload, download, delete
+## Agent Connection Strategy
 
-### Log Management
-- Full-text search (FTS5) across journald, syslog, Windows Event Log
-- Live log tail via WebSocket
-- Alert rules with webhook/email notification
-- Log export and forwarding (S3, syslog, Splunk HEC)
+Agents maintain a persistent connection to the server at all times.
 
-### Audit & Compliance
-- Immutable, tenant-scoped audit log for all access events
-- Query with filters (event type, user, agent, IP, date range, outcome)
-- Full-text search across event details
-- Export as CSV or JSON
+- **QUIC primary** (UDP 443) with 0-RTT reconnection
+- **WebSocket fallback** (TCP 443) when UDP is blocked
+- **Exponential backoff** with jitter on disconnect (1s → 30s cap)
+- **Transport alternation** — if one transport fails 3 times, tries the other
+- **Heartbeat** — PING/PONG every 15s, connection declared dead after 3 missed
+- **Network change detection** — immediate reconnect on interface change
 
-### Webhooks
-- Subscription management (create, update, delete, test)
-- HMAC-SHA256 signed payloads
-- Delivery history with retry tracking
-- 8 webhook event types (agent, auth, shell, user, tenant, audit)
+## Join Token Security
 
-### EventBus (Real-Time)
-- WebSocket stream for live dashboard updates
-- Channel-based subscriptions (agents, shell, files, auth, audit, metrics, exec, system)
+Tokens are signed JWTs containing labels, type (single-use or persistent), and expiry. Single-use tokens are deleted after first successful enrollment. Persistent tokens support fleet enrollment (cloud-init, Ansible) and can be revoked from the dashboard.
+
+After enrollment, the agent authenticates with its unique HMAC-SHA256 key on every connection. The join token is never used again.
 
 ## Security & Compliance
 
@@ -161,6 +144,8 @@ Every security-sensitive endpoint is tagged with `x-nist-controls` and `x-audit-
 
 ### Cryptographic Policy
 
+**If Conduit controls both ends, PQC is mandatory. If an external party is involved, classical is available with a visible warning and audit log entry. No silent downgrades. Ever.**
+
 | Purpose | Algorithm |
 |---|---|
 | TLS key exchange | X25519MLKEM768 hybrid (Go 1.24 stdlib) |
@@ -173,7 +158,18 @@ Every security-sensitive endpoint is tagged with `x-nist-controls` and `x-audit-
 | Password hashing | Argon2id (m=64MB, t=3, p=4) |
 | Webhook signatures | HMAC-SHA256 |
 
-**Forbidden:** MD5, SHA-1, DES, 3DES, RC4, TLS 1.0/1.1/1.2, non-CSPRNG sources.
+**Classical available with warning (external party involved):**
+
+| Context | What is accepted | Why |
+|---|---|---|
+| WebAuthn | ECDSA P-256, Ed25519, RSA | Hardware authenticator chooses the algorithm |
+| ACME / Let's Encrypt | ECDSA P-256 | Let's Encrypt doesn't issue PQC certs yet |
+| Self-signed fallback | ECDSA P-256 | Browsers don't support PQC TLS certs yet |
+| SAML/OIDC | RSA, ECDSA | External IdP chooses the algorithm |
+
+**Absolutely forbidden (no exceptions):** MD5, SHA-1, DES, 3DES, RC4, TLS 1.0/1.1/1.2, non-CSPRNG sources.
+
+Every use of a classical algorithm where PQC was available is logged with the reason.
 
 ### Transport
 
@@ -183,65 +179,104 @@ Every security-sensitive endpoint is tagged with `x-nist-controls` and `x-audit-
 | Browser real-time | WebSocket over HTTP/3 | WebSocket over HTTP/2 |
 | Browser API | HTTP/3 | HTTP/2 |
 
-## Usage
+### Audit Logging
 
-### Viewing the Spec
+Every access event is logged: logins, session starts, shell commands, file operations, agent connections, permission changes, configuration changes. Audit logs are append-only and immutable. Searchable and filterable in the dashboard.
 
-Open `openapi.yaml` in any OpenAPI-compatible tool:
+Each log entry includes: who, what, when, where (source IP, agent), and outcome.
 
-- [Swagger Editor](https://editor.swagger.io/) — paste or import the file
-- [Redocly](https://redocly.com/) — `npx @redocly/cli preview-docs openapi.yaml`
-- [Stoplight Studio](https://stoplight.io/studio) — visual editor
-- VS Code with the [OpenAPI extension](https://marketplace.visualstudio.com/items?itemName=42Crunch.vscode-openapi)
+## Tech Stack
 
-### Code Generation
+| Layer | Technology |
+|---|---|
+| Server | Go 1.24+, `quic-go`, SQLite (SQLCipher AES-256-GCM encrypted) |
+| Frontend | Next.js 15 (static export), shadcn/ui, Tailwind v4, xterm.js |
+| TUI | bubbletea |
+| Auth | WebAuthn (passkeys), SAML/OIDC SSO, Ed25519 JWT |
+| Transport | QUIC (primary), WebSocket (fallback), CWP binary wire protocol |
+| TLS | TLS 1.3 only, X25519MLKEM768 PQC hybrid, Let's Encrypt ACME |
+| Agent | Go, Linux/macOS/Windows, systemd/launchd/Windows service |
 
-Generate server stubs and client SDKs from the spec:
+## Project Structure
+
+```
+conduit/
+├── ce.md                       # Community Edition specification
+├── directive.md                # Project directive (single source of truth)
+├── openapi.yaml                # OpenAPI 3.1.1 API specification
+├── cmd/
+│   ├── conduit-server/         # Server binary
+│   └── conduit/                # Agent + CLI + TUI binary
+├── internal/
+│   ├── protocol/               # CWP wire protocol
+│   ├── server/                 # Server core (QUIC, HTTP, auth, routing, audit, webhooks)
+│   ├── agent/                  # Agent (shell, files, transport, install per OS)
+│   ├── tui/                    # bubbletea TUI
+│   ├── auth/                   # JWT, WebAuthn, SSO, join tokens
+│   ├── db/                     # SQLite + migrations
+│   └── shared/                 # TLS, config
+├── web/                        # Next.js 15 frontend
+│   ├── app/                    # Pages (landing, login, dashboard, audit, users, webhooks)
+│   └── components/             # shadcn/ui + terminal + file browser
+└── embed.go                    # //go:embed web/out/*
+```
+
+## API Specification
+
+The full REST API is defined in `openapi.yaml` (OpenAPI 3.1.1, ~10,100 lines, 150 endpoints, 85 schemas).
 
 ```bash
-# Go server (oapi-codegen)
-go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+# Redocly preview
+npx @redocly/cli preview-docs openapi.yaml
+
+# Generate Go server stubs
 oapi-codegen -generate types,server,spec -package api openapi.yaml > api/api.gen.go
 
-# TypeScript client types
+# Generate TypeScript client types
 npx openapi-typescript openapi.yaml -o src/lib/api-types.ts
 
-# Validation middleware
-# The spec enforces additionalProperties: false on all input schemas,
-# matching the directive requirement: "Unknown JSON fields rejected on all API endpoints"
-```
-
-### Linting
-
-```bash
-# Redocly linter
+# Lint
 npx @redocly/cli lint openapi.yaml
-
-# Spectral (custom rules)
-npx @stoplight/spectral-cli lint openapi.yaml
 ```
 
-## File Structure
+### Key Design Decisions
 
-```
-files/
-  directive.md     # Project directive (single source of truth)
-  openapi.yaml     # This OpenAPI 3.1.1 specification
-  README.md        # This file
-```
+1. **Single file** — one spec file, no split `$ref` directories. Simplifies code generation.
+2. **Cursor-based pagination** — all list endpoints use opaque cursors, not offset/limit.
+3. **RFC 9457 errors** — all errors use `application/problem+json` with field-level validation.
+4. **`additionalProperties: false`** — all input schemas reject unknown fields. No silent ignore.
+5. **`x-nist-controls` and `x-audit-event`** — custom extensions on every security-relevant operation.
+6. **Nullable via type arrays** — OpenAPI 3.1 `type: ["string", "null"]` syntax.
+7. **WebSocket as upgrade endpoints** — WS endpoints documented as GET with 101 response.
 
-## Key Design Decisions
+## What CE Does Not Include
 
-1. **Single file** — the spec is one file rather than split across directories. This simplifies code generation and avoids `$ref` resolution issues across tools. At 10K lines it's large but manageable.
+These features are part of the full Conduit SaaS platform or later phases. This list exists so we know exactly what was left out — everything not on this list is in CE.
 
-2. **Cursor-based pagination** — all list endpoints use opaque cursors rather than offset/limit. This handles concurrent inserts and scales to large datasets.
+| Feature | Why excluded |
+|---|---|
+| Multi-tenancy hierarchy (sub-tenants, visibility modes) | SaaS-only. CE has single tenant with multiple users + RBAC. |
+| Billing / Stripe (plans, subscriptions, usage metering) | SaaS-only. |
+| SaaS mode (tenant signup, subdomain routing) | SaaS-only. |
+| Per-tenant object storage bucket | SaaS-only. Tied to multi-tenancy. |
+| Vault (secrets & key management, Shamir, TPM) | Later phase. |
+| PKI (CAs, certificate issuance, CRL, OCSP) | Later phase. |
+| Serial & hardware (serial console, OS install over serial) | Later phase. |
+| PXE / iPXE provisioning (network boot, OS profile builder) | Later phase. |
+| Kubernetes / k3s orchestration UI | Later phase. |
+| Legacy SSH connections (stored credentials, SFTP) | Later phase. |
+| PIV / smart card authentication | Later phase. |
+| iOS app | Later phase. |
+| Cluster mode (rqlite, multi-master federation) | Later phase. |
+| Anycast / embedded DNS management | Later phase. |
+| Terraform provider | Later phase. |
+| AppSynergy QUIC Tunnel Service | Separate product. |
+| Network & routing (BGP, OSPF, topology visualization) | Later phase. |
+| Log management (collection, ingestion, FTS5 search) | Later phase. |
+| BMC/IPMI out-of-band management (Redfish, iDRAC, iLO, AMT, DASH) | Later phase. |
+| Platform-level JWT (multi-product `products` claim) | SaaS-only. |
+| Infrastructure TV dashboards (Mission Control) | Later phase. |
 
-3. **RFC 9457 errors** — all error responses use `application/problem+json` with structured field-level validation errors.
+## License
 
-4. **`additionalProperties: false`** — all input schemas reject unknown fields, matching the directive's "no silent ignore" requirement.
-
-5. **`x-nist-controls` and `x-audit-event`** — custom extensions on every security-relevant operation for compliance traceability.
-
-6. **Nullable via type arrays** — uses OpenAPI 3.1's `type: ["string", "null"]` syntax (not the deprecated `nullable: true` from 3.0).
-
-7. **WebSocket documented as upgrade endpoints** — since OpenAPI has no native WebSocket support, WS endpoints are documented as GET with 101 response and message schemas in the description.
+Proprietary. Copyright AppSynergy.
