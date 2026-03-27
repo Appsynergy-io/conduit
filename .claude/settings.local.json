@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s https://ui.shadcn.com/docs/installation/next)",
+      "WebFetch(domain:ui.shadcn.com)",
+      "WebFetch(domain:dev.to)",
+      "WebSearch"
+    ]
+  }
+}
