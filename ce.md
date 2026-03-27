@@ -1,4 +1,4 @@
-# Conduit Community Edition
+# Conduit CE (Community Edition)
 
 ## What This Is
 
@@ -78,7 +78,7 @@ No multi-tenancy. No billing. No sub-tenants. No SaaS mode. Just a rock-solid si
 
 ```
 conduit/
-├── community.md
+├── ce.md
 ├── go.mod                          # Go module (both binaries)
 ├── go.sum
 ├── Makefile                        # Build both binaries + frontend
