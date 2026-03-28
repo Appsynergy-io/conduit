@@ -387,3 +387,15 @@ Key decisions:
 
 ### Branch Strategy
 The `ce` branch is the main branch for all Community Edition work. Do not create PRs into `main` from CE branches. Always branch from `ce` (e.g., `ce-<random>`). PRs target `ce`, not `main`.
+
+### Checking Out a Dev Branch
+
+Always generate the random suffix using `openssl` at checkout time — never pre-generate or hardcode it:
+
+```bash
+git checkout ce
+git pull origin ce
+git checkout -b ce-$(openssl rand -hex 4)
+```
+
+This ensures a cryptographically random suffix every time.
