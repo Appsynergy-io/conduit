@@ -80,9 +80,10 @@ No multi-tenancy hierarchy. No billing. No sub-tenants. No SaaS mode. Single ten
 ### Audit & Compliance
 - Audit logging for all access events (who accessed what, when, from where)
 - Audit log viewer in dashboard (search, filter, query)
-- Webhooks on audit events (HMAC-SHA256 signed payloads)
+- Webhooks on audit events (HMAC-SHA256 signed payloads, HTTPS-only in production)
 - Webhook subscription management (create, update, delete, test)
 - Webhook delivery history with retry tracking
+- Dev mode: webhook delivery to `http://localhost` loopback and self-signed HTTPS
 - NIST SP 800-53 Rev. 5 control coverage
 - NIST SP 800-131A cryptographic compliance
 - Security audit readiness (SOC 2 Type II, penetration test ready)
@@ -129,7 +130,7 @@ No multi-tenancy hierarchy. No billing. No sub-tenants. No SaaS mode. Single ten
 │  └────────────────────────────────────────────┘              │
 │                       │                                      │
 │  ┌────────────────────┴───────────────────────┐              │
-│  │  SQLite (single-tenant, tenant_id=default) │              │
+│  │  SQLite (single-tenant, UUID at setup)      │              │
 │  └────────────────────────────────────────────┘              │
 │                                                              │
 │  Production: UDP 443 (QUIC) + TCP 443 (TLS/HTTP)            │
@@ -402,8 +403,8 @@ The agent must stay connected to the server at all times. Disconnection = blind 
 - **Network change detection:** Agent monitors network interfaces; on change, immediately attempt reconnect (don't wait for heartbeat timeout)
 
 ### Connection State (Server-Side)
-- Server tracks each agent: `connected`, `disconnected`, `stale`
-- `disconnected` after heartbeat timeout (45s with no PONG)
+- Server tracks each agent: `online`, `offline`, `stale`
+- `offline` after heartbeat timeout (45s with no PONG)
 - `stale` after extended disconnect (configurable, default 24h)
 - Dashboard shows real-time connection status via EventBus
 - Reconnecting agent resumes its identity — same agent ID, same labels
@@ -420,27 +421,38 @@ The agent must stay connected to the server at all times. Disconnection = blind 
 - `POST /api/v1/auth/webauthn/register/finish` — complete registration
 - `POST /api/v1/auth/webauthn/login/begin` — start assertion
 - `POST /api/v1/auth/webauthn/login/finish` — complete assertion, returns JWT
-- JWT: Ed25519 signed, short-lived (15 min access + 7 day refresh)
+- JWT: Ed25519 signed, short-lived (15 min access + 24 hour refresh with rotation)
+- JWT claims: `sub` (user ID), `tid` (tenant ID), `services` (enabled service slugs, e.g. `["remote-access"]`), `roles`, `permissions`, `iat`, `exp`
 - All dashboard/API requests require valid JWT in `Authorization: Bearer` header
+- Middleware checks `jwt.services` includes the `x-service` required by each endpoint tag
 - Browser WebSocket upgrade includes JWT for auth
 
-### Dev Mode (Password Fallback)
+### Dev Mode (Setup Token as Password)
 
 - Enabled by `--dev` flag or `server.mode: dev` in `server.yaml`
-- `POST /api/v1/auth/login` with `{email, password}` — returns JWT
-- Password hashed with Argon2id
+- Setup token is generated and printed to stdout (same as production)
+- After setup, the token is NOT deleted — it persists as the login credential
+- `POST /api/v1/auth/password/login` with `{email, setupToken}` — returns JWT
+- Server hashes setup token with Argon2id and stores as password_hash
+- WebAuthn requires secure context (HTTPS with valid cert or localhost origin) — self-signed dev certs may not satisfy this, so token auth is always available
+- If passkey registration succeeds in dev mode, both passkey and token auth remain available
 - Dev mode clearly indicated in the UI (banner)
 - **Dev mode also uses port 8443 and self-signed certs**
+- Webhook URLs: `http://localhost` / `http://127.0.0.1` permitted (loopback only), self-signed HTTPS accepted
+- Agent joins: `--dev-insecure` flag to accept self-signed server cert
 
 ### Setup Wizard (First Run)
 
-1. Server starts on `localhost:8080` (HTTP only, localhost-only)
-2. Wizard collects: domain name, admin email, org name, temporary password
-3. Server obtains ACME cert, writes `server.yaml`, creates admin user
-4. Restarts on port 443 with TLS
-5. Admin logs in with temp password → forced passkey registration
-6. Temp password deleted from DB after passkey registered
-7. `/setup` returns 404 forever after
+1. Server starts, generates a setup token (CSPRNG, 32 bytes, base64url), prints it to stdout
+2. Server opens `localhost:8080` (HTTP only, localhost-only)
+3. Wizard collects: setup token, domain name, admin email, org name, first/last name
+4. Server validates setup token (constant-time comparison), proves console access (NIST IA-12)
+5. Server obtains ACME cert, writes `server.yaml`, creates tenant + admin user + seeds `remote-access` service
+6. Restarts on port 443 with TLS
+7. Admin submits setup token again + registers passkey via `/setup/passkey`
+8. **Production:** setup token DELETE'd from DB (not NULL), passkey-only auth
+9. **Dev mode:** setup token persists as password_hash, both passkey and token auth available
+10. Setup mode permanently deactivated, `/setup` returns 404 forever after
 
 ### CLI Authentication
 
@@ -554,8 +566,8 @@ Every security-sensitive endpoint is tagged with `x-nist-controls` and `x-audit-
 
 | Standard | Coverage |
 |---|---|
-| **NIST SP 800-53 Rev. 5** | AC-2, AC-3, AC-6, AC-7, AC-11, AC-12, AC-17, AU-2, AU-3, AU-6, AU-9, AU-10, AU-12, CM-2, CM-3, CM-6, CM-7, IA-2, IA-4, IA-5, IA-8, IA-12, SC-8, SC-12, SC-13, SC-23, SC-28, SI-2, SI-4, SI-7, SI-10 |
-| **NIST SP 800-63B** | AAL3 passkey authentication |
+| **NIST SP 800-53 Rev. 5** | AC-2, AC-3, AC-6, AC-7, AC-11, AC-12, AC-17, AU-2, AU-3, AU-6, AU-9, AU-10, AU-12, CM-2, CM-3, CM-6, CM-7, IA-2, IA-4, IA-5, IA-8, IA-12, SC-8, SC-12, SC-13, SC-18, SC-23, SC-28, SI-2, SI-4, SI-7, SI-10, SI-12 |
+| **NIST SP 800-63B** | AAL2 baseline, AAL3 with hardware authenticator |
 | **NIST SP 800-131A Rev. 2** | Cryptographic algorithm selection and transition |
 | **NIST SP 800-57** | Key management lifecycle |
 | **FIPS 203 (ML-KEM)** | X25519MLKEM768 hybrid TLS key exchange |
@@ -627,14 +639,53 @@ Each log entry includes: who, what, when, where (source IP, agent), and outcome.
 ## SQLite Schema (Community Edition)
 
 ```sql
+-- Tenant (CE generates one UUID at setup — NIST IA-4)
+-- All tables reference this for SaaS transferability
+CREATE TABLE tenants (
+    id TEXT PRIMARY KEY,              -- UUID v4, generated at setup
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- Service registry (CE ships with one: 'remote-access')
+-- SaaS adds more services as rows. JWT 'services' claim lists enabled slugs.
+-- Middleware checks jwt.services includes the x-service tag for each endpoint.
+CREATE TABLE services (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    slug TEXT UNIQUE NOT NULL,        -- 'remote-access'
+    name TEXT NOT NULL,               -- 'Conduit Remote Access'
+    description TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- Tenant ↔ Service junction (which services a tenant has access to)
+CREATE TABLE tenant_services (
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    service_id TEXT NOT NULL REFERENCES services(id),
+    enabled_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, service_id)
+);
+
+-- Seed at setup time:
+-- INSERT INTO services (id, slug, name, description, created_at)
+--   VALUES (<uuid>, 'remote-access', 'Conduit Remote Access',
+--           'Secure remote shell, file management, and agent orchestration.', <now>);
+-- INSERT INTO tenant_services (tenant_id, service_id, enabled_at)
+--   VALUES (<tenant_uuid>, <service_uuid>, <now>);
+
 -- Users (single tenant, multiple users with RBAC)
 CREATE TABLE users (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     email TEXT UNIQUE NOT NULL,
-    display_name TEXT NOT NULL,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    display_name TEXT,
     role TEXT NOT NULL DEFAULT 'org_member', -- platform_owner, org_owner, org_admin, org_member
-    password_hash TEXT,               -- Argon2id, NULL after passkey setup
-    suspended INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active', -- active, suspended, invited
+    password_hash TEXT,               -- Argon2id, dev mode only (production uses setup token + passkeys)
+    created_by TEXT REFERENCES users(id),
+    last_login_at TEXT,               -- Nullable, updated on each successful login
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -642,17 +693,27 @@ CREATE TABLE users (
 -- Groups
 CREATE TABLE groups (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     name TEXT UNIQUE NOT NULL,
     description TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
--- Group membership
+-- Group membership (users)
 CREATE TABLE group_members (
     group_id TEXT NOT NULL REFERENCES groups(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
     PRIMARY KEY (group_id, user_id)
+);
+
+-- Group membership (agents) — Agent.groupIds in API
+CREATE TABLE agent_group_members (
+    group_id TEXT NOT NULL REFERENCES groups(id),
+    agent_id TEXT NOT NULL REFERENCES agents(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (group_id, agent_id)
 );
 
 -- WebAuthn credentials
@@ -661,9 +722,13 @@ CREATE TABLE passkeys (
     user_id TEXT NOT NULL REFERENCES users(id),
     credential_id BLOB NOT NULL,
     public_key BLOB NOT NULL,
+    algorithm TEXT,                   -- e.g., 'ECDSA-P256', 'Ed25519'
+    algorithm_warning TEXT,           -- non-null if classical (quantum-vulnerable)
+    authenticator_type TEXT,          -- 'platform' or 'cross-platform'
     sign_count INTEGER NOT NULL DEFAULT 0,
     name TEXT,                        -- User-given name ("MacBook Touch ID")
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
 );
 
 -- SSO providers (SAML/OIDC)
@@ -679,15 +744,19 @@ CREATE TABLE sso_providers (
 -- Registered agents
 CREATE TABLE agents (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     hostname TEXT NOT NULL,
-    os TEXT,
-    arch TEXT,
+    display_name TEXT,
+    os TEXT,                          -- 'linux', 'windows', 'darwin'
+    arch TEXT,                        -- 'amd64', 'arm64'
     labels TEXT,                      -- JSON: {"env":"production","role":"web"}
+    ip TEXT,                          -- Last-known remote IP address
     agent_key_hash TEXT NOT NULL,     -- HMAC key hash for auth
-    status TEXT NOT NULL DEFAULT 'disconnected',
+    status TEXT NOT NULL DEFAULT 'offline', -- online, offline, stale
     transport TEXT,                   -- 'quic' or 'websocket'
     version TEXT,                     -- Agent binary version
-    last_seen TEXT,
+    last_seen_at TEXT,
+    connected_at TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -695,10 +764,12 @@ CREATE TABLE agents (
 CREATE TABLE join_tokens (
     id TEXT PRIMARY KEY,              -- UUID v4 (also the token JTI)
     type TEXT NOT NULL,               -- 'single_use' or 'persistent'
+    name TEXT NOT NULL,
     labels TEXT,                      -- JSON: labels to apply on join
     token_hash TEXT NOT NULL,         -- Hash of the signed JWT
     used_count INTEGER DEFAULT 0,
-    expires_at TEXT NOT NULL,
+    max_uses INTEGER,                 -- NULL for unlimited (persistent only)
+    expires_at TEXT,                  -- Nullable; NULL = no expiry (persistent tokens)
     revoked INTEGER DEFAULT 0,
     created_by TEXT REFERENCES users(id),
     created_at TEXT NOT NULL
@@ -713,18 +784,68 @@ CREATE TABLE sessions (
     user_agent TEXT,
     refresh_token_hash TEXT,
     expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_active_at TEXT NOT NULL
+);
+
+-- Shell sessions (active + closed, for visibility/multiplexing)
+CREATE TABLE shell_sessions (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    agent_id TEXT NOT NULL REFERENCES agents(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    status TEXT NOT NULL DEFAULT 'active', -- active, closed
+    shell TEXT,                       -- Shell path (e.g. /bin/bash)
+    cols INTEGER,
+    rows INTEGER,
+    recording INTEGER NOT NULL DEFAULT 0, -- Boolean: session recording enabled
+    created_at TEXT NOT NULL,
+    closed_at TEXT                     -- NULL while active
+);
+
+-- Shell recordings (asciicast v2, stored on server)
+CREATE TABLE shell_recordings (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    agent_id TEXT NOT NULL REFERENCES agents(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    agent_hostname TEXT,
+    user_email TEXT,
+    duration INTEGER,                 -- Duration in seconds
+    size_bytes INTEGER,               -- File size
+    format TEXT NOT NULL DEFAULT 'asciicast-v2',
     created_at TEXT NOT NULL
+);
+
+-- RBAC role assignments (user or group → role + scope)
+-- Either user_id or group_id must be set (not both, not neither)
+CREATE TABLE role_assignments (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    role TEXT NOT NULL,               -- org_owner, org_admin, org_member
+    user_id TEXT REFERENCES users(id),  -- NULL if assigned to group
+    group_id TEXT REFERENCES groups(id), -- NULL if assigned to user
+    scope TEXT,                       -- Resource scope (e.g. specific agent UUID, 'all')
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    CHECK (
+        (user_id IS NOT NULL AND group_id IS NULL) OR
+        (user_id IS NULL AND group_id IS NOT NULL)
+    )
 );
 
 -- Audit log (append-only, immutable)
 CREATE TABLE audit_log (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     event_type TEXT NOT NULL,         -- 'auth.login', 'shell.start', 'file.download', etc.
     user_id TEXT,                     -- NULL for agent-only events
+    user_email TEXT,
     agent_id TEXT,                    -- NULL for user-only events
+    agent_hostname TEXT,
     source_ip TEXT,
+    user_agent TEXT,
     detail TEXT,                      -- JSON: event-specific payload
     outcome TEXT NOT NULL,            -- 'success' or 'failure'
+    algorithm_used TEXT,              -- Crypto algorithm used (NIST SP 800-131A)
+    algorithm_warning TEXT,           -- Non-null if classical where PQC available
     created_at TEXT NOT NULL
 );
 
@@ -733,7 +854,7 @@ CREATE TABLE webhooks (
     id TEXT PRIMARY KEY,
     url TEXT NOT NULL,
     secret_hash TEXT NOT NULL,        -- HMAC-SHA256 signing key hash
-    events TEXT NOT NULL,             -- JSON: ["agent.connect", "auth.login", ...]
+    events TEXT NOT NULL,             -- JSON: ["agent.connected", "auth.login", ...]
     enabled INTEGER NOT NULL DEFAULT 1,
     created_by TEXT REFERENCES users(id),
     created_at TEXT NOT NULL
@@ -744,12 +865,80 @@ CREATE TABLE webhook_deliveries (
     id TEXT PRIMARY KEY,
     webhook_id TEXT NOT NULL REFERENCES webhooks(id),
     event_type TEXT NOT NULL,
-    status_code INTEGER,
-    response_body TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending', -- success, failed, pending
+    http_status INTEGER,
+    response_time INTEGER,            -- milliseconds
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+    next_retry_at TEXT,
     delivered_at TEXT,
     created_at TEXT NOT NULL
 );
+
+-- Bulk exec jobs (parallel command execution across agents)
+CREATE TABLE bulk_exec_jobs (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    command TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending, running, completed, cancelled, failed
+    target_count INTEGER,
+    completed_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    results TEXT,                      -- JSON: per-agent results array
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+-- Binary deploy jobs (signed binary push to agents)
+CREATE TABLE deploy_jobs (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    status TEXT NOT NULL DEFAULT 'uploading', -- uploading, deploying, completed, failed
+    target_count INTEGER,
+    completed_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    destination_path TEXT,
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE ci_tokens (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    user_id TEXT NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL,         -- SHA-256 hash of token (plain token shown once at creation)
+    scopes TEXT NOT NULL DEFAULT '[]', -- JSON array of scope strings
+    expires_at TEXT,                  -- Nullable; NULL = no expiry
+    last_used_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- ── Indexes ──────────────────────────────────────────
+-- Foreign keys and frequently queried columns
+
+CREATE INDEX idx_users_tenant_id ON users(tenant_id);
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_agents_tenant_id ON agents(tenant_id);
+CREATE INDEX idx_agents_status ON agents(status);
+CREATE INDEX idx_join_tokens_revoked ON join_tokens(revoked);
+CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX idx_shell_sessions_agent_id ON shell_sessions(agent_id);
+CREATE INDEX idx_shell_sessions_user_id ON shell_sessions(user_id);
+CREATE INDEX idx_shell_sessions_status ON shell_sessions(status);
+CREATE INDEX idx_shell_recordings_agent_id ON shell_recordings(agent_id);
+CREATE INDEX idx_shell_recordings_user_id ON shell_recordings(user_id);
+CREATE INDEX idx_role_assignments_user_id ON role_assignments(user_id);
+CREATE INDEX idx_role_assignments_group_id ON role_assignments(group_id);
+CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
+CREATE INDEX idx_audit_log_event_type ON audit_log(event_type);
+CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
+CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
+CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(status);
+CREATE INDEX idx_tenant_services_tenant_id ON tenant_services(tenant_id);
+CREATE INDEX idx_bulk_exec_jobs_status ON bulk_exec_jobs(status);
+CREATE INDEX idx_bulk_exec_jobs_created_by ON bulk_exec_jobs(created_by);
+CREATE INDEX idx_deploy_jobs_status ON deploy_jobs(status);
+CREATE INDEX idx_ci_tokens_user_id ON ci_tokens(user_id);
 ```
 
 Migrations embedded in binary, applied automatically at startup.
@@ -777,7 +966,6 @@ Migrations embedded in binary, applied automatically at startup.
 - **Network & routing** (BGP, OSPF, topology visualization)
 - **Log management** (collection agent, ingestion pipeline, FTS5 search)
 - **BMC/IPMI out-of-band management** (Redfish, iDRAC, iLO, AMT, DASH)
-- **Platform-level JWT** (multi-product `products` claim)
 - **Infrastructure TV dashboards** (Mission Control, TV/projector display mode)
 
 ---
