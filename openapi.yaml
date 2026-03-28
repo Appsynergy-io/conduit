@@ -1,7 +1,7 @@
 openapi: "3.1.1"
 info:
   title: Conduit CE by AppSynergy — API
-  version: "3.1.1"
+  version: "1.0.0"
   summary: Community Edition — remote infrastructure management platform API
   description: |
     Conduit is a remote infrastructure management platform that provides secure,
@@ -12,7 +12,7 @@ info:
 
     This API implements security controls aligned with:
     - **NIST SP 800-53 Rev. 5** — Security and Privacy Controls
-    - **NIST SP 800-63B** — Digital Identity Guidelines (AAL3 passkey authentication)
+    - **NIST SP 800-63B** — Digital Identity Guidelines (AAL2 baseline, AAL3 with hardware authenticator)
     - **NIST SP 800-131A Rev. 2** — Cryptographic Transitions
     - **NIST SP 800-57** — Key Management
     - **FIPS 203 (ML-KEM)** — Post-Quantum Key Encapsulation (X25519MLKEM768 hybrid TLS)
@@ -32,15 +32,30 @@ info:
 
     ## Community Edition
 
-    This is the CE (Community Edition) API. Single-tenant, self-hosted deployment with
-    multiple users and full RBAC. No billing, no sub-tenants, no SaaS mode.
-    The full multi-tenant SaaS API extends this specification.
+    This is the CE (Community Edition) API. Single-tenant (UUID generated at setup),
+    self-hosted deployment with multiple users and full RBAC. No billing, no sub-tenants,
+    no SaaS mode. All records carry a `tenantId` field for transferability to the
+    multi-tenant SaaS. The full multi-tenant SaaS API extends this specification.
+
+    ## Service Registry
+
+    CE includes a service abstraction layer. Each endpoint tag has an `x-service`
+    extension identifying which service it belongs to. The JWT `services` claim lists
+    the services enabled for the tenant. Middleware verifies the JWT includes the
+    required service before routing.
+
+    CE ships with one service: `remote-access` (agents, shell, files, bulk ops, metrics,
+    labels, binary signing). It is seeded at setup time and auto-granted to the tenant.
+    The SaaS platform adds more services (Vault, PKI, etc.) — each as a new entry in
+    the `services` table with its own set of `x-service`-tagged endpoints. Platform-level
+    tags (Auth, Users, Groups, RBAC, Sessions, Audit, Webhooks, EventBus, Server Config,
+    ACME, Services, Health) have no `x-service` and are always accessible.
 
     ## Authentication
 
     - **Production:** Passkeys (WebAuthn) only. No passwords.
-    - **Setup wizard:** Temporary password for first-run bootstrap only, deleted after passkey registration.
-    - **Dev mode:** Password auth available for local development only.
+    - **Setup wizard (production):** Server generates a cryptographic setup token (CSPRNG, 32 bytes, base64url) on first start and prints it to the server process stdout. The token is required for `/setup/configure` and `/setup/passkey`. Deleted permanently after passkey registration. Proves server console access (NIST IA-12).
+    - **Dev mode:** Setup token is generated and printed to stdout. After setup, the token is NOT deleted — it persists as the dev mode login credential via `/auth/password/login` (email + setup token as password). This is necessary because WebAuthn requires a secure context (HTTPS with valid cert or localhost origin) which self-signed dev certs may not satisfy. If a passkey is successfully registered in dev mode, both passkey and token auth remain available.
     - **CLI:** Browser-based device flow returns scoped CLI token.
     - **CI/Automation:** `CONDUIT_TOKEN` environment variable with scoped, revocable tokens.
     - **Agents:** HMAC-SHA256 tokens presented during connection handshake.
@@ -159,11 +174,14 @@ info:
       - id: NIST-SP-800-63B
         name: NIST SP 800-63B
         description: Digital Identity Guidelines — Authentication and Lifecycle Management
-        level: AAL3
+        level: AAL2 (AAL3 with hardware authenticator)
         implementation: |
-          Passkey-only auth provides AAL3 assurance: cryptographic proof of possession
-          of hardware-bound key, no phishable credentials, verifier impersonation
-          resistance via WebAuthn origin check, replay resistance via challenge-response.
+          Passkey-only auth provides AAL2 baseline assurance: cryptographic proof of
+          possession, no phishable credentials, verifier impersonation resistance via
+          WebAuthn origin check, replay resistance via challenge-response.
+          AAL3 is achieved when a hardware cryptographic authenticator (e.g., YubiKey,
+          cross-platform) is used. Platform authenticators (Touch ID, Windows Hello)
+          meet AAL2. The authenticator attachment type is logged per session.
       - id: NIST-SP-800-131A-R2
         name: NIST SP 800-131A Rev. 2
         description: Transitioning the Use of Cryptographic Algorithms and Key Lengths
@@ -188,7 +206,7 @@ info:
         description: Recommendation for Key Management
         implementation: |
           CSPRNG (crypto/rand) only, purpose-bound keys, automated TLS rotation (ACME),
-          configurable JWT rotation, per-agent HMAC keys, Vault with Shamir Secret Sharing.
+          configurable JWT rotation, per-agent HMAC keys.
 
 servers:
   - url: https://{domain}/api/v1
@@ -201,6 +219,7 @@ servers:
     description: Setup wizard (first-run only, localhost, no TLS)
 
 tags:
+  # ── Platform tags (no service scope — shared across all services) ──
   - name: Setup Wizard
     description: |
       First-run server configuration. Localhost-only on HTTP port 8080.
@@ -209,7 +228,7 @@ tags:
   - name: Auth
     description: |
       WebAuthn passkey authentication, JWT token management, CLI device flow,
-      CI token management. NIST IA-2, IA-5, SP 800-63B AAL3.
+      CI token management. NIST IA-2, IA-5, SP 800-63B AAL2/AAL3.
   - name: Sessions
     description: |
       Session visibility and revocation across all auth methods (web, CLI, CI).
@@ -224,21 +243,11 @@ tags:
     description: |
       Role-based access control. Roles: platform_owner, org_owner, org_admin, org_member.
       NIST AC-3, AC-6.
-  - name: Agents
+  - name: Services
     description: |
-      Agent registration, connection management, metrics, labels, auto-update.
-      NIST CM-7, SI-2, SI-4, SI-7.
-  - name: Shell
-    description: |
-      Terminal shell sessions in browser and CLI. PTY execution on agents.
-      Multiple concurrent sessions via CWP multiplexing. Session recording.
-  - name: Files
-    description: |
-      Remote file management — list, upload, download, delete, rename, mkdir, preview.
-      File transfer over HTTPS/QUIC, resumable uploads.
-  - name: Bulk Operations
-    description: |
-      Multi-server parallel command execution and binary deployment.
+      Service registry. Lists services enabled for the tenant.
+      CE ships with one service (`remote-access`). The SaaS platform adds more.
+      Middleware checks `jwt.services` includes the required `x-service` for each endpoint.
   - name: Audit
     description: |
       Immutable, scoped audit logs for all access events.
@@ -251,26 +260,53 @@ tags:
     description: |
       Real-time WebSocket event stream for dashboard updates.
       No polling. All state changes pushed immediately.
-  - name: Metrics
-    description: |
-      Agent system metrics — CPU, RAM, disk, network. Time-series data via
-      VictoriaMetrics or SQLite ring-buffer.
   - name: Server Config
     description: |
       Server configuration management. NIST CM-2, CM-3, CM-6.
   - name: ACME
     description: |
       ACME TLS certificate auto-provisioning via Let's Encrypt.
+  - name: Health
+    description: |
+      Server health and status endpoints. Public, no auth required.
+
+  # ── Service: remote-access ──────────────────────────────────────
+  # All tags below belong to the `remote-access` service.
+  # Middleware enforces: jwt.services must include "remote-access".
+  # To add a new service, define new tags with a different x-service value.
+  - name: Agents
+    description: |
+      Agent registration, connection management, metrics, labels, auto-update.
+      NIST CM-7, SI-2, SI-4, SI-7.
+    x-service: remote-access
+  - name: Shell
+    description: |
+      Terminal shell sessions in browser and CLI. PTY execution on agents.
+      Multiple concurrent sessions via CWP multiplexing. Session recording.
+    x-service: remote-access
+  - name: Files
+    description: |
+      Remote file management — list, upload, download, delete, rename, mkdir, preview.
+      File transfer over HTTPS/QUIC, resumable uploads.
+    x-service: remote-access
+  - name: Bulk Operations
+    description: |
+      Multi-server parallel command execution and binary deployment.
+    x-service: remote-access
+  - name: Metrics
+    description: |
+      Agent system metrics — CPU, RAM, disk, network. Time-series data via
+      VictoriaMetrics or SQLite ring-buffer.
+    x-service: remote-access
   - name: Labels
     description: |
       Universal resource labelling system for surgical targeting of agents and resources.
+    x-service: remote-access
   - name: Binary Signing
     description: |
       SLH-DSA-SHA2-256s binary signing for agent updates and release artifacts.
       NIST FIPS 205, SI-7.
-  - name: Health
-    description: |
-      Server health and status endpoints. Public, no auth required.
+    x-service: remote-access
 
 security:
   - BearerAuth: []
@@ -405,24 +441,42 @@ paths:
         Localhost-only, HTTP only (no TLS yet).
 
         **Flow:**
-        1. Collects domain name, admin email, org name, first user details, temp password
-        2. Server writes `server.yaml`
-        3. Server obtains ACME TLS certificate from Let's Encrypt
-        4. Creates default tenant and first user with `platform_owner` role
-        6. Stores temp password hash (Argon2id: m=64MB, t=3, p=4)
+        1. Validates `setupToken` against the server-generated token (NIST IA-12 — proves console access)
+        2. Collects domain name, admin email, org name, first user details
+        3. Server writes `server.yaml`
+        4. Server obtains ACME TLS certificate from Let's Encrypt
+        5. Creates default tenant (UUID generated, NIST IA-4) and first user with `platform_owner` role
+        6. Seeds `remote-access` service and links it to the tenant (`tenant_services`)
         7. Restarts on HTTPS port 443
 
-        **NIST IA-12, CM-2:** Initial identity proofing and baseline configuration.
+        The setup token is generated by the server on first start (CSPRNG, 32 bytes, base64url)
+        and printed to the server process stdout. It is never transmitted over the network
+        by the server — the operator must copy it from the console.
+
+        **NIST IA-12, CM-2, IA-5:** Identity proofing via console access, baseline configuration, authenticator management.
       tags: [Setup Wizard]
       security: []
+      x-nist-controls: [IA-4, IA-12, CM-2, IA-5]
+      x-audit-event: setup.configured
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [domain, adminEmail, organizationName, firstName, lastName, temporaryPassword]
+              required: [setupToken, domain, adminEmail, organizationName, firstName, lastName]
               properties:
+                setupToken:
+                  type: string
+                  minLength: 43
+                  maxLength: 43
+                  writeOnly: true
+                  description: |
+                    Server-generated setup token (CSPRNG, 32 bytes, base64url-encoded = 43 chars).
+                    Printed to server stdout on first start. Proves operator has console access
+                    to the server process (NIST IA-12 identity proofing).
+                    Validated with constant-time comparison.
+                  example: "dGhpcyBpcyBhIHNhbXBsZSBzZXR1cCB0b2tlbg"
                 domain:
                   type: string
                   format: hostname
@@ -447,32 +501,24 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 100
-                temporaryPassword:
-                  type: string
-                  format: password
-                  minLength: 16
-                  writeOnly: true
-                  description: |
-                    Temporary password for initial login before passkey registration.
-                    Hashed with Argon2id (m=64MB, t=3, p=4).
-                    **Permanently DELETE'd from database after passkey registration.**
                 serverMode:
                   type: string
                   enum: [standalone]
                   default: standalone
                   description: |
-                    `standalone` — single-tenant, self-hosted mode (tenant_id = "default").
+                    `standalone` — single-tenant, self-hosted mode. A tenant UUID is generated
+                    at setup time (NIST IA-4, REC-API-24 — no predictable identifiers).
                     SaaS mode is available in the full Conduit platform.
             examples:
               selfHosted:
                 summary: Self-hosted single-tenant setup
                 value:
+                  setupToken: "dGhpcyBpcyBhIHNhbXBsZSBzZXR1cCB0b2tlbg"
                   domain: "conduit.example.com"
                   adminEmail: "admin@example.com"
                   organizationName: "Acme Corp"
                   firstName: "Jane"
                   lastName: "Admin"
-                  temporaryPassword: "a-very-secure-temp-password-here"
                   serverMode: "standalone"
       responses:
         "202":
@@ -502,7 +548,7 @@ paths:
         "404":
           description: Setup already completed
         "409":
-          description: Setup already in progress
+          $ref: "#/components/responses/Conflict"
 
   /setup/passkey:
     post:
@@ -510,23 +556,38 @@ paths:
       summary: Register the first passkey during setup
       description: |
         Forces passkey registration for the platform owner during setup.
+        Requires the same setup token used in `/setup/configure` (proves continued console access).
         No other action is possible until a passkey is registered.
 
         After successful registration:
-        - Temporary password hash is DELETE'd from the database (not set to NULL)
+        - Setup token is DELETE'd from the database (not set to NULL)
         - Dev-mode password auth is disabled
         - Setup mode is permanently deactivated
         - `GET /setup/*` returns 404 forever
 
-        **NIST IA-2, SP 800-63B AAL3:** Establishing phishing-resistant credential.
+        **NIST IA-2, IA-12, SP 800-63B AAL2/AAL3:** Identity proofing and establishing phishing-resistant credential.
       tags: [Setup Wizard]
       security: []
+      x-nist-controls: [IA-2, IA-12]
+      x-audit-event: setup.passkey.registered
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/WebAuthnRegistrationResponse"
+              type: object
+              required: [setupToken, credential]
+              properties:
+                setupToken:
+                  type: string
+                  writeOnly: true
+                  description: |
+                    Same server-generated setup token used in `/setup/configure`.
+                    Proves continued console access (NIST IA-12).
+                    Validated with constant-time comparison.
+                credential:
+                  $ref: "#/components/schemas/WebAuthnRegistrationResponse"
+              additionalProperties: false
       responses:
         "201":
           description: Passkey registered, setup complete
@@ -541,7 +602,7 @@ paths:
                     const: "setup_complete"
                   message:
                     type: string
-                    example: "Passkey registered. Temporary password deleted. Setup complete."
+                    example: "Passkey registered. Setup token deleted. Setup complete."
                   accessToken:
                     type: string
                     description: JWT access token (Ed25519 signed)
@@ -571,7 +632,7 @@ paths:
         (platform authenticators like Touch ID / Windows Hello, or roaming
         authenticators like YubiKeys).
 
-        **NIST IA-2, IA-5, SP 800-63B AAL3.**
+        **NIST IA-2, IA-5, SP 800-63B AAL2/AAL3.**
       tags: [Auth]
       responses:
         "200":
@@ -582,6 +643,8 @@ paths:
                 $ref: "#/components/schemas/WebAuthnCreationOptions"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /auth/webauthn/register/finish:
     post:
@@ -640,6 +703,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /auth/webauthn/login/begin:
     post:
@@ -652,9 +717,10 @@ paths:
         **Replay resistance:** Built into WebAuthn protocol (challenge-response).
         **Verifier impersonation resistance:** Browser verifies the origin.
 
-        **NIST IA-2, SP 800-63B AAL3.**
+        **NIST IA-2, AC-7, SP 800-63B AAL2/AAL3.**
       tags: [Auth]
       security: []
+      x-nist-controls: [IA-2, AC-7]
       requestBody:
         required: true
         content:
@@ -666,6 +732,7 @@ paths:
                   type: string
                   format: email
                   description: Optional — for discoverable credential hints
+              additionalProperties: false
       responses:
         "200":
           description: Login challenge issued
@@ -673,6 +740,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WebAuthnRequestOptions"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/webauthn/login/finish:
     post:
@@ -690,11 +759,11 @@ paths:
         - `iat` — Issued at
         - `exp` — Expiration (configurable, default 15 minutes)
 
-        **NIST AC-12, SC-23:** Session bound to authenticated identity.
+        **NIST AC-7, AC-12, SC-23:** Rate-limited, session bound to authenticated identity.
         **x-audit-event:** auth.login.webauthn
       tags: [Auth]
       security: []
-      x-nist-controls: [IA-2, AC-12, SC-23, AU-12]
+      x-nist-controls: [IA-2, AC-7, AC-12, SC-23, AU-12]
       x-audit-event: auth.login.webauthn
       requestBody:
         required: true
@@ -717,6 +786,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/webauthn/credentials:
     get:
@@ -727,6 +798,7 @@ paths:
         Each entry shows credential ID, authenticator type, algorithm,
         creation date, and last used date.
       tags: [Auth]
+      x-nist-controls: [IA-5]
       responses:
         "200":
           description: List of registered passkeys
@@ -742,6 +814,8 @@ paths:
                       $ref: "#/components/schemas/PasskeyCredential"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /auth/webauthn/credentials/{credentialId}:
     delete:
@@ -751,8 +825,10 @@ paths:
         Removes a passkey. Cannot delete the last remaining passkey
         (user must always have at least one).
 
+        **NIST IA-5:** Authenticator management.
         **x-audit-event:** passkey.deleted
       tags: [Auth]
+      x-nist-controls: [IA-5, AU-12]
       x-audit-event: passkey.deleted
       parameters:
         - name: credentialId
@@ -766,29 +842,37 @@ paths:
           description: Passkey deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Cannot delete last passkey
+          $ref: "#/components/responses/Conflict"
 
   # ════════════════════════════════════════════════════════════════
-  # AUTH — Temporary Password (Setup & Dev Mode Only)
+  # AUTH — Setup Token / Password (Dev Mode Only)
   # ════════════════════════════════════════════════════════════════
 
   /auth/password/login:
     post:
       operationId: passwordLogin
-      summary: Temporary password login (setup/dev only)
+      summary: Password login (dev mode only)
       description: |
-        Password authentication is available ONLY:
-        - During setup wizard before passkey registration
-        - In dev mode (`server.mode: dev`)
-
+        Password authentication is available ONLY in dev mode (`server.mode: dev`).
         In production, this endpoint returns 404.
 
-        Password is hashed with Argon2id (m=64MB, t=3, p=4).
-        After passkey registration in setup, the password hash row is
-        DELETE'd from the database — not set to NULL.
+        In dev mode, the setup token doubles as the login password — the server
+        hashes it with Argon2id (m=64MB, t=3, p=4) and stores it as the admin's
+        password hash. The setup token is NOT deleted after setup in dev mode
+        because WebAuthn requires a secure context (HTTPS with valid cert or
+        localhost origin) which self-signed dev certs may not satisfy.
+
+        If a passkey is successfully registered in dev mode, both passkey and
+        password auth remain available for convenience.
+
+        Production setup uses the setup token flow (`/setup/configure` + `/setup/passkey`)
+        with no password ever created. The setup token is permanently deleted after
+        passkey registration.
 
         **NIST AC-7:** Failed attempts are logged and rate-limited.
         **x-audit-event:** auth.login.password
@@ -910,6 +994,8 @@ paths:
           description: Token revoked
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # AUTH — CLI Device Flow
@@ -930,6 +1016,7 @@ paths:
         **NIST IA-2:** Multi-factor via passkey in browser.
       tags: [Auth]
       security: []
+      x-nist-controls: [IA-2]
       requestBody:
         required: true
         content:
@@ -986,6 +1073,7 @@ paths:
         The CLI stores the returned token encrypted on disk, per-profile.
       tags: [Auth]
       security: []
+      x-nist-controls: [IA-2]
       requestBody:
         required: true
         content:
@@ -1030,6 +1118,8 @@ paths:
         Called by the browser after the user authenticates with their passkey.
         Links the device code to the authenticated session.
       tags: [Auth]
+      x-nist-controls: [IA-2, AU-12]
+      x-audit-event: auth.device.authorized
       requestBody:
         required: true
         content:
@@ -1049,6 +1139,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: Invalid or expired user code
 
@@ -1086,6 +1178,8 @@ paths:
                           $ref: "#/components/schemas/CiToken"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createCiToken
       summary: Create a CI/automation token
@@ -1172,6 +1266,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /auth/ci-tokens/{tokenId}:
     delete:
@@ -1182,6 +1278,7 @@ paths:
 
         **x-audit-event:** ci_token.revoked
       tags: [Auth]
+      x-nist-controls: [IA-5, AU-12]
       x-audit-event: ci_token.revoked
       parameters:
         - name: tokenId
@@ -1195,6 +1292,8 @@ paths:
           description: Token revoked
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1211,6 +1310,7 @@ paths:
         Passkeys remain the primary authentication mechanism.
         SSO is an additional identity source, not a replacement.
       tags: [Auth]
+      x-nist-controls: [IA-2]
       responses:
         "200":
           description: List of SSO providers
@@ -1226,10 +1326,13 @@ paths:
                       $ref: "#/components/schemas/SsoProvider"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createSsoProvider
       summary: Configure a new SSO provider
       tags: [Auth]
+      x-nist-controls: [IA-2, AU-12]
       x-audit-event: sso_provider.created
       requestBody:
         required: true
@@ -1248,12 +1351,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /auth/sso/providers/{providerId}:
     get:
       operationId: getSsoProvider
       summary: Get SSO provider details
       tags: [Auth]
+      x-nist-controls: [IA-2]
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
       responses:
@@ -1265,12 +1371,15 @@ paths:
                 $ref: "#/components/schemas/SsoProvider"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     put:
       operationId: updateSsoProvider
       summary: Update SSO provider
       tags: [Auth]
+      x-nist-controls: [IA-2, AU-12]
       x-audit-event: sso_provider.updated
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1291,12 +1400,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteSsoProvider
       summary: Delete SSO provider
       tags: [Auth]
+      x-nist-controls: [IA-2, AU-12]
       x-audit-event: sso_provider.deleted
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1305,6 +1417,8 @@ paths:
           description: Provider deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1314,6 +1428,8 @@ paths:
       summary: SAML assertion consumer service
       tags: [Auth]
       security: []
+      x-nist-controls: [IA-2]
+      x-audit-event: auth.login.saml
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
       requestBody:
@@ -1340,6 +1456,7 @@ paths:
       summary: OIDC authorization code callback
       tags: [Auth]
       security: []
+      x-nist-controls: [IA-2]
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
         - name: code
@@ -1367,7 +1484,7 @@ paths:
       operationId: listSessions
       summary: List all authenticated sessions
       description: |
-        Lists all active sessions across all auth methods — web, CLI, CI, iOS.
+        Lists all active sessions across all auth methods — web, CLI, CI.
         All sessions are visible and individually revocable.
 
         **NIST AC-11, AC-12:** Session visibility and management.
@@ -1398,6 +1515,8 @@ paths:
                           $ref: "#/components/schemas/Session"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /sessions/{sessionId}:
     delete:
@@ -1423,6 +1542,8 @@ paths:
           description: Session revoked
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1436,6 +1557,7 @@ paths:
 
         **x-audit-event:** session.revoked_all
       tags: [Sessions]
+      x-nist-controls: [AC-12, AU-12]
       x-audit-event: session.revoked_all
       responses:
         "200":
@@ -1448,6 +1570,10 @@ paths:
                 properties:
                   revokedCount:
                     type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # USERS
@@ -1539,13 +1665,14 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Email already exists in this tenant
+          $ref: "#/components/responses/Conflict"
 
   /users/{userId}:
     get:
       operationId: getUser
       summary: Get user details
       tags: [Users]
+      x-nist-controls: [AC-2]
       parameters:
         - $ref: "#/components/parameters/PathUserId"
       responses:
@@ -1557,6 +1684,8 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
@@ -1565,6 +1694,7 @@ paths:
       description: |
         **x-audit-event:** user.updated
       tags: [Users]
+      x-nist-controls: [AC-2, AU-12]
       x-audit-event: user.updated
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1585,6 +1715,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
@@ -1593,6 +1725,7 @@ paths:
       description: |
         **x-audit-event:** user.deleted
       tags: [Users]
+      x-nist-controls: [AC-2, AU-12]
       x-audit-event: user.deleted
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1601,6 +1734,8 @@ paths:
           description: User deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1613,6 +1748,7 @@ paths:
 
         **x-audit-event:** user.suspended
       tags: [Users]
+      x-nist-controls: [AC-2, AU-12]
       x-audit-event: user.suspended
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1625,6 +1761,8 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1633,6 +1771,7 @@ paths:
       operationId: reinstateUser
       summary: Reinstate suspended user
       tags: [Users]
+      x-nist-controls: [AC-2, AU-12]
       x-audit-event: user.reinstated
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1645,6 +1784,8 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1653,6 +1794,7 @@ paths:
       operationId: getCurrentUser
       summary: Get current authenticated user
       tags: [Users]
+      x-nist-controls: [IA-2]
       responses:
         "200":
           description: Current user details
@@ -1662,6 +1804,8 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # GROUPS
@@ -1672,6 +1816,7 @@ paths:
       operationId: listGroups
       summary: List groups
       tags: [Groups]
+      x-nist-controls: [AC-3]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -1695,10 +1840,13 @@ paths:
                           $ref: "#/components/schemas/Group"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createGroup
       summary: Create a group
       tags: [Groups]
+      x-nist-controls: [AC-3, AU-12]
       x-audit-event: group.created
       requestBody:
         required: true
@@ -1717,12 +1865,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /groups/{groupId}:
     get:
       operationId: getGroup
       summary: Get group details
       tags: [Groups]
+      x-nist-controls: [AC-3]
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
       responses:
@@ -1734,12 +1885,15 @@ paths:
                 $ref: "#/components/schemas/Group"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
       operationId: updateGroup
       summary: Update group
       tags: [Groups]
+      x-nist-controls: [AC-3, AU-12]
       x-audit-event: group.updated
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -1760,12 +1914,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteGroup
       summary: Delete group
       tags: [Groups]
+      x-nist-controls: [AC-3, AU-12]
       x-audit-event: group.deleted
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -1774,6 +1931,8 @@ paths:
           description: Group deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1782,6 +1941,7 @@ paths:
       operationId: listGroupMembers
       summary: List group members
       tags: [Groups]
+      x-nist-controls: [AC-3]
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
         - $ref: "#/components/parameters/CursorParam"
@@ -1802,12 +1962,15 @@ paths:
                           $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     post:
       operationId: addGroupMember
       summary: Add user to group
       tags: [Groups]
+      x-nist-controls: [AC-3, AU-12]
       x-audit-event: group.member_added
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -1830,16 +1993,19 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: User already in group
+          $ref: "#/components/responses/Conflict"
 
   /groups/{groupId}/members/{userId}:
     delete:
       operationId: removeGroupMember
       summary: Remove user from group
       tags: [Groups]
+      x-nist-controls: [AC-3, AU-12]
       x-audit-event: group.member_removed
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -1849,6 +2015,8 @@ paths:
           description: Member removed
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1885,12 +2053,15 @@ paths:
                       $ref: "#/components/schemas/Role"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /rbac/assignments:
     get:
       operationId: listRoleAssignments
       summary: List role assignments
       tags: [RBAC]
+      x-nist-controls: [AC-3, AC-6]
       parameters:
         - name: userId
           in: query
@@ -1924,10 +2095,13 @@ paths:
                           $ref: "#/components/schemas/RoleAssignment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createRoleAssignment
       summary: Assign role to user or group
       tags: [RBAC]
+      x-nist-controls: [AC-3, AC-6, AU-12]
       x-audit-event: rbac.assignment.created
       requestBody:
         required: true
@@ -1946,12 +2120,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /rbac/assignments/{assignmentId}:
     delete:
       operationId: deleteRoleAssignment
       summary: Remove role assignment
       tags: [RBAC]
+      x-nist-controls: [AC-3, AC-6, AU-12]
       x-audit-event: rbac.assignment.deleted
       parameters:
         - name: assignmentId
@@ -1965,6 +2142,8 @@ paths:
           description: Assignment removed
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1974,6 +2153,7 @@ paths:
       summary: List all permissions
       description: Lists all available permissions that can be assigned via roles.
       tags: [RBAC]
+      x-nist-controls: [AC-3]
       responses:
         "200":
           description: List of permissions
@@ -2000,6 +2180,8 @@ paths:
                           enum: [agents, shell, files, users, groups, config, audit]
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # AGENTS
@@ -2025,8 +2207,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [online, offline, stale, all]
-            default: all
+            enum: [online, offline, stale]
         - name: transport
           in: query
           schema:
@@ -2069,6 +2250,8 @@ paths:
                           $ref: "#/components/schemas/Agent"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /agents/{agentId}:
     get:
@@ -2079,6 +2262,7 @@ paths:
         running services, open ports, labels, connection history,
         transport type, OS details.
       tags: [Agents]
+      x-nist-controls: [CM-7, SI-4]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
       responses:
@@ -2090,6 +2274,8 @@ paths:
                 $ref: "#/components/schemas/AgentDetail"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
@@ -2097,6 +2283,7 @@ paths:
       summary: Update agent metadata
       description: Update agent display name, labels, or group assignments.
       tags: [Agents]
+      x-nist-controls: [CM-3, AU-12]
       x-audit-event: agent.updated
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2136,6 +2323,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
@@ -2147,6 +2336,7 @@ paths:
 
         **x-audit-event:** agent.deleted
       tags: [Agents]
+      x-nist-controls: [AC-6, AU-12]
       x-audit-event: agent.deleted
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2155,6 +2345,8 @@ paths:
           description: Agent removed
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2163,6 +2355,7 @@ paths:
       operationId: listJoinTokens
       summary: List agent join tokens
       tags: [Agents]
+      x-nist-controls: [IA-5]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -2182,6 +2375,8 @@ paths:
                           $ref: "#/components/schemas/JoinToken"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createJoinToken
       summary: Create agent join token
@@ -2191,6 +2386,7 @@ paths:
 
         **x-audit-event:** agent.join_token.created
       tags: [Agents]
+      x-nist-controls: [IA-5, AU-12]
       x-audit-event: agent.join_token.created
       requestBody:
         required: true
@@ -2236,12 +2432,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /agents/join-tokens/{tokenId}:
     delete:
       operationId: revokeJoinToken
       summary: Revoke a join token
       tags: [Agents]
+      x-nist-controls: [IA-5, AU-12]
       x-audit-event: agent.join_token.revoked
       parameters:
         - name: tokenId
@@ -2255,6 +2454,8 @@ paths:
           description: Token revoked
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2328,7 +2529,7 @@ paths:
         "401":
           description: Invalid or expired join token
         "409":
-          description: Agent already registered
+          $ref: "#/components/responses/Conflict"
 
   /agents/{agentId}/metrics:
     get:
@@ -2365,6 +2566,8 @@ paths:
                 $ref: "#/components/schemas/AgentMetrics"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2419,6 +2622,8 @@ paths:
                     description: FIPS 205 post-quantum signature
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2430,8 +2635,10 @@ paths:
         Sends a reboot command to the agent's host machine.
         Lights-out basic management.
 
+        **NIST AC-6:** Least privilege — requires elevated role.
         **x-audit-event:** agent.reboot
       tags: [Agents]
+      x-nist-controls: [AC-6, AU-12]
       x-audit-event: agent.reboot
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2454,6 +2661,8 @@ paths:
           description: Reboot command sent
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2461,7 +2670,10 @@ paths:
     post:
       operationId: poweroffAgent
       summary: Power off agent machine
+      description: |
+        **NIST AC-6:** Least privilege — requires elevated role.
       tags: [Agents]
+      x-nist-controls: [AC-6, AU-12]
       x-audit-event: agent.poweroff
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2483,6 +2695,8 @@ paths:
           description: Poweroff command sent
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2499,6 +2713,7 @@ paths:
         Returns all label keys and values currently in use across agents.
         Used for building filter UIs and targeting bulk operations.
       tags: [Labels]
+      x-nist-controls: [CM-7]
       responses:
         "200":
           description: Label summary
@@ -2527,6 +2742,8 @@ paths:
                           description: Number of agents with this label key
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # SHELL & TERMINAL
@@ -2537,6 +2754,7 @@ paths:
       operationId: listShellSessions
       summary: List active shell sessions on agent
       tags: [Shell]
+      x-nist-controls: [AU-2]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
       responses:
@@ -2554,6 +2772,8 @@ paths:
                       $ref: "#/components/schemas/ShellSession"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     post:
@@ -2602,6 +2822,8 @@ paths:
                 $ref: "#/components/schemas/ShellSession"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
@@ -2612,6 +2834,7 @@ paths:
       operationId: terminateShellSession
       summary: Terminate a shell session
       tags: [Shell]
+      x-nist-controls: [AC-12, AU-12]
       x-audit-event: shell.session.terminated
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2621,6 +2844,8 @@ paths:
           description: Session terminated
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2643,6 +2868,7 @@ paths:
         - `{"type": "output", "data": "<base64>"}` — terminal output
         - `{"type": "exit", "code": 0}` — session ended
       tags: [Shell]
+      x-nist-controls: [AU-2, AU-3]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - $ref: "#/components/parameters/PathSessionId"
@@ -2651,6 +2877,8 @@ paths:
           description: WebSocket connection established
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2660,6 +2888,7 @@ paths:
       summary: Resize terminal
       description: Sends a SHELL_RESIZE CWP frame to the agent.
       tags: [Shell]
+      x-nist-controls: [AU-12]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - $ref: "#/components/parameters/PathSessionId"
@@ -2683,6 +2912,8 @@ paths:
           description: Resize applied
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2694,6 +2925,7 @@ paths:
         Lists recorded terminal sessions in asciicast v2 format.
         Recordings can be played back in the dashboard.
       tags: [Shell]
+      x-nist-controls: [AU-9]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -2723,12 +2955,15 @@ paths:
                           $ref: "#/components/schemas/ShellRecording"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /shell/recordings/{recordingId}:
     get:
       operationId: getShellRecording
       summary: Get recording metadata
       tags: [Shell]
+      x-nist-controls: [AU-9]
       parameters:
         - name: recordingId
           in: path
@@ -2745,6 +2980,8 @@ paths:
                 $ref: "#/components/schemas/ShellRecording"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2753,6 +2990,7 @@ paths:
       operationId: getShellRecordingData
       summary: Download recording data (asciicast v2)
       tags: [Shell]
+      x-nist-controls: [AU-9]
       parameters:
         - name: recordingId
           in: path
@@ -2770,6 +3008,8 @@ paths:
                 format: binary
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2787,6 +3027,7 @@ paths:
 
         **x-audit-event:** file.listed
       tags: [Files]
+      x-nist-controls: [AU-2]
       x-audit-event: file.listed
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2819,6 +3060,8 @@ paths:
                       $ref: "#/components/schemas/FileEntry"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2832,6 +3075,7 @@ paths:
 
         **x-audit-event:** file.downloaded
       tags: [Files]
+      x-nist-controls: [AU-2, AU-12]
       x-audit-event: file.downloaded
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2859,6 +3103,8 @@ paths:
                 format: int64
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2874,6 +3120,7 @@ paths:
 
         **x-audit-event:** file.uploaded
       tags: [Files]
+      x-nist-controls: [AU-2, AU-12]
       x-audit-event: file.uploaded
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2937,6 +3184,8 @@ paths:
                     format: int64
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "413":
@@ -2947,6 +3196,7 @@ paths:
       operationId: deleteFile
       summary: Delete a file or directory on agent
       tags: [Files]
+      x-nist-controls: [AU-2, AU-12]
       x-audit-event: file.deleted
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2970,6 +3220,8 @@ paths:
           description: File deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2978,6 +3230,7 @@ paths:
       operationId: renameFile
       summary: Rename or move a file on agent
       tags: [Files]
+      x-nist-controls: [AU-2, AU-12]
       x-audit-event: file.renamed
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2999,16 +3252,19 @@ paths:
           description: File renamed
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Destination already exists
+          $ref: "#/components/responses/Conflict"
 
   /agents/{agentId}/files/mkdir:
     post:
       operationId: createDirectory
       summary: Create a directory on agent
       tags: [Files]
+      x-nist-controls: [AU-2, AU-12]
       x-audit-event: file.mkdir
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -3032,10 +3288,12 @@ paths:
           description: Directory created
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Path already exists
+          $ref: "#/components/responses/Conflict"
 
   /agents/{agentId}/files/preview:
     get:
@@ -3043,6 +3301,7 @@ paths:
       summary: Preview file content
       description: Returns first N bytes of a file for preview in the browser.
       tags: [Files]
+      x-nist-controls: [AU-2]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - name: path
@@ -3082,6 +3341,8 @@ paths:
                     enum: [utf-8, base64]
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3139,12 +3400,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /exec/{jobId}:
     get:
       operationId: getBulkExecJob
       summary: Get bulk execution job status
       tags: [Bulk Operations]
+      x-nist-controls: [AU-2]
       parameters:
         - $ref: "#/components/parameters/PathJobId"
       responses:
@@ -3156,6 +3420,8 @@ paths:
                 $ref: "#/components/schemas/BulkExecJob"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3171,6 +3437,7 @@ paths:
         - `{"type": "exit", "agentId": "...", "code": 0}` — per-agent completion
         - `{"type": "complete", "summary": {...}}` — all agents done
       tags: [Bulk Operations]
+      x-nist-controls: [AU-2]
       parameters:
         - $ref: "#/components/parameters/PathJobId"
       responses:
@@ -3178,6 +3445,8 @@ paths:
           description: WebSocket connection established
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3186,6 +3455,7 @@ paths:
       operationId: cancelBulkExec
       summary: Cancel a running bulk exec job
       tags: [Bulk Operations]
+      x-nist-controls: [AU-12]
       x-audit-event: exec.bulk.cancelled
       parameters:
         - $ref: "#/components/parameters/PathJobId"
@@ -3194,6 +3464,8 @@ paths:
           description: Job cancelled
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3205,6 +3477,7 @@ paths:
         Binary deployment service. Pushes a file to multiple agents
         and optionally executes a post-deploy command.
       tags: [Bulk Operations]
+      x-nist-controls: [SI-2, SI-7, AU-12]
       x-audit-event: deploy.started
       requestBody:
         required: true
@@ -3239,6 +3512,8 @@ paths:
                 $ref: "#/components/schemas/DeployJob"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # AUDIT
@@ -3326,6 +3601,7 @@ paths:
       operationId: getAuditEvent
       summary: Get audit event details
       tags: [Audit]
+      x-nist-controls: [AU-9]
       parameters:
         - name: eventId
           in: path
@@ -3342,6 +3618,8 @@ paths:
                 $ref: "#/components/schemas/AuditEvent"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3351,6 +3629,8 @@ paths:
       summary: Export audit log
       description: Export filtered audit events as CSV or JSON for compliance reporting.
       tags: [Audit]
+      x-nist-controls: [AU-9]
+      x-audit-event: audit.exported
       requestBody:
         required: true
         content:
@@ -3387,6 +3667,8 @@ paths:
                 format: binary
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # WEBHOOKS
@@ -3397,6 +3679,7 @@ paths:
       operationId: listWebhookSubscriptions
       summary: List webhook subscriptions
       tags: [Webhooks]
+      x-nist-controls: [AU-12]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -3416,16 +3699,23 @@ paths:
                           $ref: "#/components/schemas/WebhookSubscription"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createWebhookSubscription
       summary: Create webhook subscription
       description: |
-        Registers an HTTPS endpoint to receive audit event webhooks.
+        Registers an endpoint to receive audit event webhooks.
         Payloads are signed with HMAC-SHA256.
         At-least-once delivery with exponential backoff retries.
 
+        **URL validation:** Production requires HTTPS with valid TLS cert.
+        Dev mode permits `http://localhost` / `http://127.0.0.1` (loopback)
+        and HTTPS with self-signed certs. See `url` field for details.
+
         **x-audit-event:** webhook.subscription.created
       tags: [Webhooks]
+      x-nist-controls: [AU-12]
       x-audit-event: webhook.subscription.created
       requestBody:
         required: true
@@ -3444,12 +3734,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /webhooks/subscriptions/{subscriptionId}:
     get:
       operationId: getWebhookSubscription
       summary: Get webhook subscription
       tags: [Webhooks]
+      x-nist-controls: [AU-12]
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
       responses:
@@ -3461,12 +3754,15 @@ paths:
                 $ref: "#/components/schemas/WebhookSubscription"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
       operationId: updateWebhookSubscription
       summary: Update webhook subscription
       tags: [Webhooks]
+      x-nist-controls: [AU-12]
       x-audit-event: webhook.subscription.updated
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
@@ -3485,12 +3781,15 @@ paths:
                 $ref: "#/components/schemas/WebhookSubscription"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteWebhookSubscription
       summary: Delete webhook subscription
       tags: [Webhooks]
+      x-nist-controls: [AU-12]
       x-audit-event: webhook.subscription.deleted
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
@@ -3499,6 +3798,8 @@ paths:
           description: Subscription deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3507,6 +3808,7 @@ paths:
       operationId: testWebhook
       summary: Send test webhook event
       tags: [Webhooks]
+      x-nist-controls: [AU-12]
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
       responses:
@@ -3527,12 +3829,15 @@ paths:
                     description: Response time in milliseconds
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /webhooks/deliveries:
     get:
       operationId: listWebhookDeliveries
       summary: List webhook delivery attempts
       tags: [Webhooks]
+      x-nist-controls: [AU-12]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -3563,6 +3868,8 @@ paths:
                           $ref: "#/components/schemas/WebhookDelivery"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # EVENTBUS (WebSocket Real-Time)
@@ -3599,6 +3906,7 @@ paths:
         - `exec` — bulk exec progress
         - `system` — server-level events
       tags: [EventBus]
+      x-nist-controls: [SI-4]
       parameters:
         - name: channels
           in: query
@@ -3611,6 +3919,8 @@ paths:
           description: WebSocket connection established
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # SERVER CONFIGURATION
@@ -3681,6 +3991,73 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
+  # SERVICES
+  # ════════════════════════════════════════════════════════════════
+
+  /services:
+    get:
+      operationId: listServices
+      summary: List enabled services
+      description: |
+        Returns services enabled for the authenticated tenant.
+        CE ships with one service (`remote-access`), seeded at setup time.
+        The SaaS platform adds additional services per tenant plan.
+
+        Middleware uses this registry to enforce `jwt.services` claims:
+        each endpoint's tag has an `x-service` extension, and the middleware
+        verifies the JWT includes the required service slug before routing.
+      tags: [Services]
+      x-nist-controls: [AC-3]
+      responses:
+        "200":
+          description: List of enabled services
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Service"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /services/{serviceSlug}:
+    get:
+      operationId: getService
+      summary: Get service details
+      description: |
+        Returns details for a specific enabled service by slug.
+        Returns 404 if the service is not enabled for this tenant.
+      tags: [Services]
+      x-nist-controls: [AC-3]
+      parameters:
+        - name: serviceSlug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "Service slug (e.g. `remote-access`)"
+          example: "remote-access"
+      responses:
+        "200":
+          description: Service details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ════════════════════════════════════════════════════════════════
   # ACME / TLS
   # ════════════════════════════════════════════════════════════════
 
@@ -3690,6 +4067,7 @@ paths:
       summary: Get ACME certificate status
       description: Returns TLS certificate status from Let's Encrypt ACME provisioning.
       tags: [ACME]
+      x-nist-controls: [SC-8]
       responses:
         "200":
           description: ACME certificate status
@@ -3727,18 +4105,23 @@ paths:
                     type: integer
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /acme/renew:
     post:
       operationId: renewAcmeCertificate
       summary: Force ACME certificate renewal
       tags: [ACME]
+      x-nist-controls: [SC-8, AU-12]
       x-audit-event: acme.renewed
       responses:
         "202":
           description: Renewal initiated
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
   # AGENT CONNECTION (WebSocket/QUIC handshake)
@@ -3767,6 +4150,7 @@ paths:
       tags: [Agents]
       security:
         - AgentToken: []
+      x-audit-event: agent.connected
       parameters:
         - name: Connection
           in: header
@@ -4060,6 +4444,7 @@ components:
         **JWT Claims:**
         - `sub` — User ID (UUID v4)
         - `tid` — Tenant ID (determines data scope)
+        - `services` — Service slugs the tenant has enabled (e.g. `["remote-access"]`)
         - `roles` — Role identifiers within the tenant
         - `permissions` — Permission strings
         - `iat` / `exp` — Issued/expiration timestamps
@@ -4241,6 +4626,16 @@ components:
 
     NotFound:
       description: "404 — Resource not found"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/X-Request-Id"
+
+    Conflict:
+      description: "409 — Resource conflict (NIST SI-10)"
       content:
         application/problem+json:
           schema:
@@ -4878,6 +5273,10 @@ components:
 
     RoleAssignment:
       type: object
+      description: |
+        Assigns a role to a user or group within a scope.
+        Exactly one of `userId` or `groupId` must be set (not both, not neither).
+        NIST AC-3, AC-6 — access enforcement, least privilege.
       required: [id, role, createdAt]
       properties:
         id:
@@ -4890,14 +5289,16 @@ components:
             - string
             - "null"
           format: uuid
+          description: "User this role is assigned to (null if assigned to group)"
         groupId:
           type:
             - string
             - "null"
           format: uuid
+          description: "Group this role is assigned to (null if assigned to user)"
         scope:
           type: string
-          description: Resource scope (e.g., specific agent, all agents)
+          description: "Resource scope — specific agent UUID, or `all` for all agents"
         createdAt:
           type: string
           format: date-time
@@ -5295,7 +5696,14 @@ components:
         all:
           type: boolean
           default: false
-          description: Target all agents (requires confirmation)
+          description: Target all agents (requires `confirmAll` to be true)
+        confirmAll:
+          type: boolean
+          default: false
+          description: |
+            Must be `true` when `all` is `true`. Server rejects the request if
+            `all: true` without `confirmAll: true` (NIST AC-6 — prevent accidental
+            broad-scope operations).
 
     BulkExecJob:
       type: object
@@ -5373,6 +5781,9 @@ components:
         createdAt:
           type: string
           format: date-time
+        createdBy:
+          type: string
+          format: uuid
 
     # ── Audit ──
 
@@ -5500,7 +5911,21 @@ components:
         url:
           type: string
           format: uri
-          description: HTTPS endpoint to receive events
+          description: |
+            Endpoint to receive webhook events. All payloads are signed with HMAC-SHA256.
+
+            **Production mode (NIST SC-8):** HTTPS only. Valid TLS certificate required.
+            HTTP URLs are rejected. Self-signed certificates are rejected.
+
+            **Dev mode (`--dev`):** Two relaxations for local testing:
+            - `http://localhost` and `http://127.0.0.1` are permitted (loopback only —
+              traffic never leaves the machine, same trust model as the setup wizard
+              on localhost:8080 per NIST IA-12).
+            - `https://` with self-signed certificates is accepted (TLS verification
+              skipped on webhook delivery, consistent with `--dev-insecure` for agent joins).
+            - All other HTTP URLs are still rejected, even in dev mode.
+
+            Webhook deliveries are audit-logged regardless of mode.
         events:
           type: array
           items:
@@ -5556,6 +5981,36 @@ components:
         attemptedAt:
           type: string
           format: date-time
+
+    # ── Services ──
+
+    Service:
+      type: object
+      description: |
+        A service available on the platform. CE ships with one service (`remote-access`).
+        The SaaS platform adds more services (Vault, PKI, etc.) as separate entries.
+        Middleware checks `jwt.services` includes the required service slug for each endpoint.
+      required: [id, slug, name, enabledAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          description: "Unique machine-readable identifier (e.g. `remote-access`)"
+          example: "remote-access"
+        name:
+          type: string
+          description: "Human-readable service name"
+          example: "Conduit Remote Access"
+        description:
+          type: ["string", "null"]
+          description: "Service description"
+          example: "Secure remote shell, file management, and agent orchestration."
+        enabledAt:
+          type: string
+          format: date-time
+          description: "When this service was enabled for the tenant"
 
     # ── Server Config ──
 
