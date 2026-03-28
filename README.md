@@ -23,10 +23,11 @@ This is the open foundation that the full Conduit SaaS platform is built on.
 - **Multi-OS agents** — Linux (systemd), macOS (launchd), Windows (service). amd64 + arm64.
 - **Real-time dashboard** — Agent status, connections, and events stream live via WebSocket EventBus. No polling.
 - **Audit logging** — Every access event logged: who, what, when, where, outcome. Append-only, immutable.
-- **Webhooks** — HMAC-SHA256 signed payloads on audit events. Subscription management with delivery history.
+- **Webhooks** — HMAC-SHA256 signed payloads on audit events. Subscription management with delivery history. HTTPS-only in production; dev mode permits `http://localhost` loopback and self-signed HTTPS.
 - **Bulk exec** — Run commands across multiple agents in parallel with streaming output.
 - **Terminal recording** — Session recording and playback (asciicast v2).
 - **Agent auto-update** — Signed binary push from server to all agents.
+- **Service registry** — Extensible service abstraction. CE ships with one service (`remote-access`). Each endpoint is tagged with `x-service`; middleware enforces `jwt.services`. Adding a new service to the SaaS platform is a new table row, not an architecture change.
 
 ## Architecture
 
@@ -40,8 +41,9 @@ This is the open foundation that the full Conduit SaaS platform is built on.
 │                                        promo site) │
 │                                                    │
 │  Auth: WebAuthn / SAML / OIDC (prod)               │
-│        Password (dev mode only)                    │
-│  JWT: Ed25519    SQLite    Let's Encrypt            │
+│        Setup token (dev mode only)                 │
+│  JWT: Ed25519  Services: jwt.services middleware   │
+│  SQLite        Let's Encrypt                       │
 │  TLS: X25519MLKEM768 PQC hybrid                    │
 └────────────────────────────────────────────────────┘
        ▲ QUIC/WSS                  ▲ HTTPS + WSS
@@ -77,7 +79,7 @@ This is the open foundation that the full Conduit SaaS platform is built on.
 ./conduit-server --dev
 ```
 
-First run launches the setup wizard on `localhost:8080`. Enter your domain, admin email, and a temporary password. The server obtains a TLS cert, restarts on port 443, and forces you to register a passkey. The temporary password is deleted permanently after.
+First run generates a **setup token** and prints it to the server console. Open `localhost:8080`, enter the setup token along with your domain and admin email. The server obtains a TLS cert, restarts on port 443, and requires the setup token again to register your passkey. The setup token is deleted permanently after passkey registration. In dev mode, the setup token persists as the login credential (email + token as password) because WebAuthn requires a secure context.
 
 ### 2. Enroll an Agent
 
@@ -134,8 +136,8 @@ Every security-sensitive endpoint is tagged with `x-nist-controls` and `x-audit-
 
 | Standard | Coverage |
 |---|---|
-| **NIST SP 800-53 Rev. 5** | AC-2, AC-3, AC-6, AC-7, AC-11, AC-12, AC-17, AU-2, AU-3, AU-6, AU-9, AU-10, AU-12, CM-2, CM-3, CM-6, CM-7, IA-2, IA-4, IA-5, IA-8, IA-12, SC-8, SC-12, SC-13, SC-23, SC-28, SI-2, SI-4, SI-7, SI-10 |
-| **NIST SP 800-63B** | AAL3 passkey authentication |
+| **NIST SP 800-53 Rev. 5** | AC-2, AC-3, AC-6, AC-7, AC-11, AC-12, AC-17, AU-2, AU-3, AU-6, AU-9, AU-10, AU-12, CM-2, CM-3, CM-6, CM-7, IA-2, IA-4, IA-5, IA-8, IA-12, SC-8, SC-12, SC-13, SC-18, SC-23, SC-28, SI-2, SI-4, SI-7, SI-10, SI-12 |
+| **NIST SP 800-63B** | AAL2 baseline, AAL3 with hardware authenticator |
 | **NIST SP 800-131A Rev. 2** | Cryptographic algorithm selection and transition |
 | **NIST SP 800-57** | Key management lifecycle |
 | **FIPS 203 (ML-KEM)** | X25519MLKEM768 hybrid TLS key exchange |
@@ -223,7 +225,7 @@ conduit/
 
 ## API Specification
 
-The full REST API is defined in `openapi.yaml` (OpenAPI 3.1.1, ~10,100 lines, 150 endpoints, 85 schemas).
+The full REST API is defined in `openapi.yaml` (OpenAPI 3.1.1, ~6,100 lines, 81 paths, 101 operations + 7 webhook callbacks, 40 schemas).
 
 ```bash
 # Redocly preview
@@ -245,9 +247,10 @@ npx @redocly/cli lint openapi.yaml
 2. **Cursor-based pagination** — all list endpoints use opaque cursors, not offset/limit.
 3. **RFC 9457 errors** — all errors use `application/problem+json` with field-level validation.
 4. **`additionalProperties: false`** — all input schemas reject unknown fields. No silent ignore.
-5. **`x-nist-controls` and `x-audit-event`** — custom extensions on every security-relevant operation.
+5. **`x-nist-controls`, `x-audit-event`, and `x-service`** — custom extensions for security controls, audit events, and service scoping on operations.
 6. **Nullable via type arrays** — OpenAPI 3.1 `type: ["string", "null"]` syntax.
 7. **WebSocket as upgrade endpoints** — WS endpoints documented as GET with 101 response.
+8. **Service registry** — endpoint tags carry `x-service` extensions; middleware enforces `jwt.services` claim. CE ships with one service (`remote-access`).
 
 ## What CE Does Not Include
 
@@ -255,13 +258,13 @@ These features are part of the full Conduit SaaS platform or later phases. This 
 
 | Feature | Why excluded |
 |---|---|
-| Multi-tenancy hierarchy (sub-tenants, visibility modes) | SaaS-only. CE has single tenant with multiple users + RBAC. |
+| Multi-tenancy hierarchy (sub-tenants, visibility modes) | SaaS-only. CE generates a tenant UUID at setup time (NIST IA-4) with multiple users + RBAC. All records carry a `tenantId` field for transferability to the multi-tenant SaaS. |
 | Billing / Stripe (plans, subscriptions, usage metering) | SaaS-only. |
 | SaaS mode (tenant signup, subdomain routing) | SaaS-only. |
 | Per-tenant object storage bucket | SaaS-only. Tied to multi-tenancy. |
-| Vault (secrets & key management, Shamir, TPM) | Later phase. |
-| PKI (CAs, certificate issuance, CRL, OCSP) | Later phase. |
-| Serial & hardware (serial console, OS install over serial) | Later phase. |
+| Vault (secrets & key management, Shamir Secret Sharing, TPM-sealed delivery) | Later phase. |
+| PKI (root CAs, intermediate CAs, certificate issuance, CRL, OCSP) | Later phase. |
+| Serial & hardware (serial console connections, OS installation over serial) | Later phase. |
 | PXE / iPXE provisioning (network boot, OS profile builder) | Later phase. |
 | Kubernetes / k3s orchestration UI | Later phase. |
 | Legacy SSH connections (stored credentials, SFTP) | Later phase. |
@@ -270,12 +273,11 @@ These features are part of the full Conduit SaaS platform or later phases. This 
 | Cluster mode (rqlite, multi-master federation) | Later phase. |
 | Anycast / embedded DNS management | Later phase. |
 | Terraform provider | Later phase. |
-| AppSynergy QUIC Tunnel Service | Separate product. |
+| AppSynergy QUIC Tunnel Service (separate VPN product) | Separate product. |
 | Network & routing (BGP, OSPF, topology visualization) | Later phase. |
-| Log management (collection, ingestion, FTS5 search) | Later phase. |
+| Log management (collection agent, ingestion pipeline, FTS5 search) | Later phase. |
 | BMC/IPMI out-of-band management (Redfish, iDRAC, iLO, AMT, DASH) | Later phase. |
-| Platform-level JWT (multi-product `products` claim) | SaaS-only. |
-| Infrastructure TV dashboards (Mission Control) | Later phase. |
+| Infrastructure TV dashboards (Mission Control, TV/projector display mode) | Later phase. |
 
 ## License
 
