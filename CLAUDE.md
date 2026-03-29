@@ -386,4 +386,7 @@ Key decisions:
 - QUIC+WS wire protocol, passkeys, Let's Encrypt, systemd agent
 
 ### Branch Strategy
-The `ce` branch is the main branch for all Community Edition work. Do not create PRs into `main` from CE branches. Always branch from `ce` (e.g., `ce-<random>`). PRs target `ce`, not `main`.
+The `ce` branch is the main branch for all Community Edition work. Do not create PRs into `main` from CE branches. Always branch from `ce`. PRs target `ce`, not `main`.
+
+### Branch Naming Convention
+Dev branches from `ce` MUST use `ce-<random_hex>` format. Generate with: `openssl rand -hex 4` (e.g., `ce-4bb5d3a7`). Never use descriptive names like `ce-feature` or literal names like `ce-rand`.
