@@ -51,11 +51,11 @@ No multi-tenancy hierarchy. No billing. No sub-tenants. No SaaS mode. Single ten
 - Full host visibility per agent: CPU, memory, disk, network, services, ports
 - Agent metrics dashboard (CPU, RAM, disk — `AGENT_INFO` frames)
 - Universal resource labelling system for surgical targeting
-- Agent installed as systemd service via `conduit join`
+- Agent installed as system service (systemd / launchd / Windows service) via `conduit join`
 
 ### Shell & Terminal
 - Shell sessions in browser (xterm.js, full feature parity)
-- PTY shell execution on agent (Linux)
+- PTY shell execution on agent (Linux, macOS, Windows via ConPTY)
 - Multiple concurrent shell sessions per agent (multiplexed via CWP)
 - Terminal session recording + playback (asciicast v2)
 
@@ -142,7 +142,7 @@ No multi-tenancy hierarchy. No billing. No sub-tenants. No SaaS mode. Single ten
   ┌────┴─────┐                 ┌────┴──────────┐
   │  Agent   │                 │   Browser     │
   │ (conduit)│                 │  shadcn/ui    │
-  │ systemd  │                 │  xterm.js     │
+  │  OS svc  │                 │  xterm.js     │
   │ service  │                 │  file manager │
   └──────────┘                 └───────────────┘
 
@@ -323,8 +323,8 @@ The token is a signed JWT containing:
    - Server generates a unique **agent identity** (UUID + HMAC-SHA256 agent key)
    - Server applies the labels from the token to the new agent record
    - Server returns the agent ID + agent key + server fingerprint
-   - Agent stores credentials in `/etc/conduit/agent.yaml`
-   - Agent installs itself as a systemd service (`conduit-agent.service`)
+   - Agent stores credentials in a platform-appropriate config path (`/etc/conduit/agent.yaml` on Linux, `/Library/Application Support/Conduit/agent.yaml` on macOS, `C:\ProgramData\Conduit\agent.yaml` on Windows)
+   - Agent installs itself as a system service (systemd on Linux, launchd on macOS, Windows service on Windows)
    - Agent starts and connects to server using its agent key
 4. If single-use token: server deletes the token immediately after successful join
 5. If persistent token: token remains valid for more machines until TTL or revocation
@@ -350,9 +350,11 @@ Labels assigned during enrollment are the primary mechanism for organizing and t
   - `conduit shell --label role=web` (if multiple matches, shows picker)
 - **Displayed in dashboard** — agents grouped/filterable by labels
 
-### systemd Service Installation
+### System Service Installation
 
-`conduit join` installs the agent as a systemd service:
+`conduit join` installs the agent as a system service appropriate to the OS:
+
+**Linux (systemd):**
 
 ```ini
 [Unit]
@@ -372,10 +374,22 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 ```
 
-- Binary copied to `/usr/local/bin/conduit`
-- Config written to `/etc/conduit/agent.yaml`
-- Service enabled and started immediately
-- `Restart=always` ensures the agent survives crashes and reboots
+- Binary: `/usr/local/bin/conduit`
+- Config: `/etc/conduit/agent.yaml`
+
+**macOS (launchd):**
+
+- Binary: `/usr/local/bin/conduit`
+- Config: `/Library/Application Support/Conduit/agent.yaml`
+- Plist: `/Library/LaunchDaemons/io.appsynergy.conduit-agent.plist`
+
+**Windows (service):**
+
+- Binary: `C:\Program Files\Conduit\conduit.exe`
+- Config: `C:\ProgramData\Conduit\agent.yaml`
+- Registered as a Windows service via `sc.exe` or native Go service API
+
+All platforms: service enabled and started immediately, auto-restarts on crash or reboot.
 
 ---
 
@@ -1006,12 +1020,12 @@ The Community Edition is complete when:
 1. `conduit-server` starts, runs setup wizard, obtains Let's Encrypt cert
 2. Operator registers a passkey and is in the dashboard
 3. Operator generates a join token with labels from the dashboard
-4. On a remote Linux machine: `conduit join <url> <token>` installs the agent as a systemd service
+4. On a remote machine (Linux, macOS, or Windows): `conduit join <url> <token>` installs the agent as a system service
 5. Agent appears in the dashboard in real-time (no refresh)
 6. Operator clicks agent → live terminal works like SSH (full PTY, resize, interactive programs)
 7. Operator switches to file browser → navigates directories, downloads a file, uploads a file
 8. Operator uses TUI: `conduit` (no args) → sees agent list → enters shell
-9. Kill the agent process → dashboard shows disconnected immediately → agent auto-restarts (systemd) and reconnects
+9. Kill the agent process → dashboard shows disconnected immediately → agent auto-restarts (via the OS service manager) and reconnects
 10. Network blip → agent reconnects automatically with no operator intervention
 11. Community Edition landing page loads at `/` with self-host pitch
 12. Unauthenticated access to dashboard/API returns 401
