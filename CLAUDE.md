@@ -376,14 +376,14 @@ Always use: `react-hook-form` + `zod` + `@hookform/resolvers` + shadcn Form comp
 Branch `ce` is the Conduit Community Edition — the production foundation for the full SaaS product. Every feature built here must be production-quality. No shortcuts that would need rewriting. The CE is the base layer the SaaS sits on. No multi-tenancy, no billing, no sub-tenants.
 
 Key decisions:
-- Linux agent only (for now)
+- Multi-OS agents: Linux (systemd), macOS (launchd), Windows (service) — amd64 + arm64
 - Self-contained binary (all assets embedded, zero CDN)
 - Standard ports (443) in prod, 8443 in dev
 - Single monorepo with both binaries (Go + Next.js static export)
 - SQLite for persistence (single tenant — UUID generated at setup, tenantId on all records for SaaS transferability, no multi-tenant query scoping)
 - TUI is bubbletea, shell-only for CE
 - shadcn/ui for web frontend
-- QUIC+WS wire protocol, passkeys, Let's Encrypt, systemd agent
+- QUIC+WS wire protocol, passkeys, Let's Encrypt, OS service agent (systemd/launchd/Windows service)
 
 ### Branch Strategy
 The `ce` branch is the main branch for all Community Edition work. Do not create PRs into `main` from CE branches. Always branch from `ce`. PRs target `ce`, not `main`.

@@ -509,6 +509,7 @@ paths:
                     `standalone` — single-tenant, self-hosted mode. A tenant UUID is generated
                     at setup time (NIST IA-4, REC-API-24 — no predictable identifiers).
                     SaaS mode is available in the full Conduit platform.
+              additionalProperties: false
             examples:
               selfHosted:
                 summary: Self-hosted single-tenant setup
@@ -559,11 +560,14 @@ paths:
         Requires the same setup token used in `/setup/configure` (proves continued console access).
         No other action is possible until a passkey is registered.
 
-        After successful registration:
+        After successful registration in production:
         - Setup token is DELETE'd from the database (not set to NULL)
-        - Dev-mode password auth is disabled
         - Setup mode is permanently deactivated
         - `GET /setup/*` returns 404 forever
+
+        In dev mode, the setup token is NOT deleted after passkey registration
+        — both passkey and password auth remain available for convenience
+        (WebAuthn requires a secure context that self-signed dev certs may not satisfy).
 
         **NIST IA-2, IA-12, SP 800-63B AAL2/AAL3:** Identity proofing and establishing phishing-resistant credential.
       tags: [Setup Wizard]
@@ -602,7 +606,7 @@ paths:
                     const: "setup_complete"
                   message:
                     type: string
-                    example: "Passkey registered. Setup token deleted. Setup complete."
+                    example: "Passkey registered. Setup complete."
                   accessToken:
                     type: string
                     description: JWT access token (Ed25519 signed)
@@ -937,6 +941,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [SC-23, AC-12]
+      x-audit-event: auth.token.refreshed
       requestBody:
         required: true
         content:
@@ -1457,6 +1462,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2]
+      x-audit-event: auth.login.oidc
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
         - name: code
@@ -1902,7 +1908,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/GroupCreate"
+              $ref: "#/components/schemas/GroupUpdate"
       responses:
         "200":
           description: Group updated
@@ -2889,6 +2895,7 @@ paths:
       description: Sends a SHELL_RESIZE CWP frame to the agent.
       tags: [Shell]
       x-nist-controls: [AU-12]
+      x-audit-event: shell.session.resized
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - $ref: "#/components/parameters/PathSessionId"
@@ -3771,7 +3778,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/WebhookSubscriptionCreate"
+              $ref: "#/components/schemas/WebhookSubscriptionUpdate"
       responses:
         "200":
           description: Subscription updated
@@ -4015,9 +4022,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items]
+                required: [data]
                 properties:
-                  items:
+                  data:
                     type: array
                     items:
                       $ref: "#/components/schemas/Service"
@@ -5250,6 +5257,18 @@ components:
           maxLength: 1000
       additionalProperties: false
 
+    GroupUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+      additionalProperties: false
+
     # ── RBAC ──
 
     Role:
@@ -5947,6 +5966,35 @@ components:
           description: HMAC-SHA256 signing secret. Auto-generated if omitted.
       additionalProperties: false
 
+    WebhookSubscriptionUpdate:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          description: |
+            Endpoint to receive webhook events. See WebhookSubscriptionCreate
+            for URL validation rules per mode.
+        events:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: |
+            Event types to subscribe to. Supports wildcards:
+            - `agent.*` — all agent events
+            - `auth.*` — all auth events
+            - `audit.*` — all audit events
+            - `shell.*`, `file.*`, `user.*`
+        enabled:
+          type: boolean
+        secret:
+          type: string
+          minLength: 32
+          writeOnly: true
+          description: HMAC-SHA256 signing secret. Replaces existing secret.
+      additionalProperties: false
+
     WebhookDelivery:
       type: object
       required: [id, subscriptionId, eventType, status, attemptedAt]
@@ -6004,7 +6052,9 @@ components:
           description: "Human-readable service name"
           example: "Conduit Remote Access"
         description:
-          type: ["string", "null"]
+          type:
+            - string
+            - "null"
           description: "Service description"
           example: "Secure remote shell, file management, and agent orchestration."
         enabledAt:
