@@ -1,0 +1,60 @@
+# Go
+/conduit-server
+/conduit
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+vendor/
+
+# Frontend
+node_modules/
+.next/
+out/
+dist/
+web/out/
+.turbo/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Test & coverage
+coverage/
+*.coverprofile
+*.out
+
+# Build artifacts
+/bin/
+/build/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db

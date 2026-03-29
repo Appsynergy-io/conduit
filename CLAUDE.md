@@ -140,6 +140,9 @@ When writing ANY code:
 - `openapi.yaml` is the API contract (endpoint shapes, schemas, validation)
 - `CLAUDE.md` is the coding rules (how to write code)
 
+### Project Security Overrides
+This project enforces **TLS 1.3 only** — TLS 1.2 is forbidden. The global NIST SP 800-52 guidance permitting TLS 1.2 as a minimum does not apply to Conduit. See `ce.md` Cryptographic Policy for the full list of forbidden algorithms.
+
 ### Go Patterns
 - **Router:** `chi/v5` — stdlib-compatible `http.Handler`, middleware chain, route groups
 - **CLI:** `cobra` + `viper` — subcommands, flag parsing, shell completions, `server.yaml` config
@@ -188,7 +191,7 @@ When writing ANY code:
 - Security-critical behavior (auth, tenant isolation, input validation) must have test coverage
 
 ### Linting & Formatting
-- **Go:** `golangci-lint` with project `.golangci.yml` — includes `gofumpt`, `govet`, `errcheck`, `staticcheck`, `gosec`
+- **Go:** `golangci-lint` with project `.golangci.yml` — includes `gofumpt`, `govet`, `errcheck`, `staticcheck`, `gosec`, `bodyclose`, `sqlclosecheck`, `exhaustive`, `noctx`, `unparam`, `wastedassign`, `errorlint`, `tenv`
 - **Frontend:** Biome (lint + format in one tool) with project `biome.json`
 - All code must pass lint before committing
 - `gofumpt` for Go formatting (stricter than `gofmt`)
