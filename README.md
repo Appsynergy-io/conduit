@@ -191,7 +191,7 @@ Each log entry includes: who, what, when, where (source IP, agent), and outcome.
 
 | Layer | Technology |
 |---|---|
-| Server | Go 1.24+, `quic-go`, SQLite (SQLCipher AES-256-GCM encrypted) |
+| Server | Go 1.24+, `quic-go`, SQLite (`modernc.org/sqlite`, pure Go) with app-layer AES-256-GCM |
 | Frontend | Next.js 15 (static export), shadcn/ui, Tailwind v4, xterm.js |
 | TUI | bubbletea |
 | Auth | WebAuthn (passkeys), SAML/OIDC SSO, Ed25519 JWT |
@@ -204,7 +204,6 @@ Each log entry includes: who, what, when, where (source IP, agent), and outcome.
 ```
 conduit/
 ├── ce.md                       # Community Edition specification
-├── directive.md                # Project directive (single source of truth)
 ├── openapi.yaml                # OpenAPI 3.1.1 API specification
 ├── cmd/
 │   ├── conduit-server/         # Server binary
@@ -225,17 +224,17 @@ conduit/
 
 ## API Specification
 
-The full REST API is defined in `openapi.yaml` (OpenAPI 3.1.1, ~6,100 lines, 81 paths, 101 operations + 7 webhook callbacks, 40 schemas).
+The full REST API is defined in `openapi.yaml` (OpenAPI 3.1.1, ~6,100 lines, 81 paths, 101 operations + 7 webhook callbacks, 42 schemas).
 
 ```bash
 # Redocly preview
 npx @redocly/cli preview-docs openapi.yaml
 
-# Generate Go server stubs
-oapi-codegen -generate types,server,spec -package api openapi.yaml > api/api.gen.go
+# Generate Go server types + chi server interface
+oapi-codegen -generate types,server,spec -package api openapi.yaml > internal/api/generated/api.gen.go
 
 # Generate TypeScript client types
-npx openapi-typescript openapi.yaml -o src/lib/api-types.ts
+npx openapi-typescript openapi.yaml -o web/lib/api-types.ts
 
 # Lint
 npx @redocly/cli lint openapi.yaml
