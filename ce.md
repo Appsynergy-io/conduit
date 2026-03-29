@@ -17,7 +17,7 @@ No multi-tenancy hierarchy. No billing. No sub-tenants. No SaaS mode. Single ten
 - HTTP/3 serving for browsers + HTTP/2 fallback
 - ACME TLS auto-provisioning (Let's Encrypt)
 - X25519MLKEM768 hybrid PQC TLS on all connections
-- SQLite database with encrypted storage (SQLCipher AES-256-GCM)
+- SQLite database (pure Go, `modernc.org/sqlite`) with app-layer AES-256-GCM on sensitive fields
 - Embedded static frontend via `embed.FS`
 - First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey)
 - WebSocket EventBus for real-time dashboard updates
