@@ -380,7 +380,7 @@ Key decisions:
 - Self-contained binary (all assets embedded, zero CDN)
 - Standard ports (443) in prod, 8443 in dev
 - Single monorepo with both binaries (Go + Next.js static export)
-- SQLite for persistence (no tenant_id scoping)
+- SQLite for persistence (single tenant — UUID generated at setup, tenantId on all records for SaaS transferability, no multi-tenant query scoping)
 - TUI is bubbletea, shell-only for CE
 - shadcn/ui for web frontend
 - QUIC+WS wire protocol, passkeys, Let's Encrypt, systemd agent
