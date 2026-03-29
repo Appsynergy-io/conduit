@@ -133,6 +133,123 @@ When writing ANY code:
 
 ---
 
+## Development Standards
+
+### Document Precedence
+- `ce.md` is the product spec (what to build) — wins for product decisions
+- `openapi.yaml` is the API contract (endpoint shapes, schemas, validation)
+- `CLAUDE.md` is the coding rules (how to write code)
+
+### Go Patterns
+- **Router:** `chi/v5` — stdlib-compatible `http.Handler`, middleware chain, route groups
+- **CLI:** `cobra` + `viper` — subcommands, flag parsing, shell completions, `server.yaml` config
+- **Logging:** `log/slog` — stdlib structured JSON logging (NIST 800-92 compliant)
+- **DI:** Constructor injection via struct fields — no frameworks (e.g., `server.New(db, logger, config)`)
+- **Shutdown:** `signal.NotifyContext` + `context.Context` propagation through all layers
+- **HTTP handlers:** Standard `http.HandlerFunc` via chi
+- **Middleware order:** Rate limit → CORS → Auth (JWT) → Tenant → RBAC → Audit → Validation → Handler
+- **Packages:** Singular names (`auth`, `db`, `server` — never `auths`, `database`, `servers`)
+- **Env vars:** `CONDUIT_` prefix for all environment variables. Viper: `viper.SetEnvPrefix("CONDUIT")`
+- **SQL safety:** Parameterized queries only. Never use `fmt.Sprintf` or string concatenation in SQL. `gosec` catches this (SI-10)
+- **File naming:** Go files use snake_case per stdlib convention (`shell_linux.go`, `install_darwin.go`)
+- **DB access:** Methods on a shared `*DB` struct, one file per entity (`users.go`, `agents.go`). No repository interfaces — tests use real in-memory SQLite
+- **tenant_id:** `db.TenantID()` returns the single CE tenant UUID (loaded at startup). Every INSERT includes it. No WHERE tenant_id scoping in CE — single tenant, column exists for SaaS transferability only
+- **Request context:** Typed context keys + helpers in `internal/middleware`: `middleware.UserFromCtx(ctx)`, `middleware.TenantIDFromCtx(ctx)`, `middleware.RequestIDFromCtx(ctx)`. Never use string keys
+
+### Error Handling
+- All API handlers return RFC 9457 `application/problem+json` via a shared `internal/apierror` package
+- Wrap errors with context: `fmt.Errorf("creating user: %w", err)`
+- Never panic in handlers
+- Never return raw error strings, stack traces, or DB errors to clients (SI-11, REC-API-23)
+- Log full error details server-side via `slog`, return only the RFC 9457 shape to the client
+- Use `errors.Is` / `errors.As` for error type checking
+
+### API Code Generation
+- **Go server:** `oapi-codegen` generates types + chi server interface + validation middleware from `openapi.yaml`
+- **TS client:** `openapi-typescript` generates types, `openapi-fetch` provides type-safe fetch wrapper
+- Never hand-write types that exist in the OpenAPI spec
+- Spec is the source of truth — edit `openapi.yaml` first, regenerate, then update handlers
+- Generated code goes in `internal/api/generated/` — never edit generated files
+
+### Frontend Patterns
+- **File naming:** kebab-case for all files (`agent-list.tsx`, `use-websocket.ts`, `login-form.tsx`)
+- **Components:** PascalCase exports (`export function AgentList`) in kebab-case files
+- **Hooks:** `use-` prefix, kebab-case (`use-auth.ts`, `use-websocket.ts`)
+- **Data fetching:** Raw `openapi-fetch` + `useState`/`useEffect`. No SWR or React Query — the WebSocket EventBus handles real-time state. Fetch on mount, EventBus updates replace state
+- **No caching libraries:** The EventBus is the revalidation layer. Two competing freshness systems create bugs
+
+### Testing Strategy
+- **Go:** Table-driven tests, `httptest` for handlers, in-memory SQLite (`:memory:`) for DB tests
+- **Assertions:** `testify` (`assert` + `require`)
+- **Frontend:** `vitest` + `@testing-library/react`
+- **E2E:** Playwright
+- Test files live next to source: `foo.go` → `foo_test.go`
+- No mocks for SQLite — use real in-memory databases
+- Security-critical behavior (auth, tenant isolation, input validation) must have test coverage
+
+### Linting & Formatting
+- **Go:** `golangci-lint` with project `.golangci.yml` — includes `gofumpt`, `govet`, `errcheck`, `staticcheck`, `gosec`
+- **Frontend:** Biome (lint + format in one tool) with project `biome.json`
+- All code must pass lint before committing
+- `gofumpt` for Go formatting (stricter than `gofmt`)
+
+### Migration Strategy
+- Embedded SQL files in `internal/db/migrations/` via `embed.FS`
+- Applied sequentially at startup (no migration CLI, no down migrations)
+- Each migration is idempotent
+- Schema version tracked in a `schema_version` table
+- Hand-rolled runner (~50 lines of Go) — no migration library
+
+### Approved Dependencies
+
+Do NOT add dependencies without explicit approval.
+
+**Go:**
+
+| Package | Purpose |
+|---------|---------|
+| `github.com/go-chi/chi/v5` | Router + middleware |
+| `github.com/quic-go/quic-go` | QUIC transport |
+| `github.com/go-webauthn/webauthn` | WebAuthn/passkeys |
+| `github.com/charmbracelet/bubbletea` | TUI |
+| `github.com/charmbracelet/lipgloss` | TUI styling |
+| `github.com/charmbracelet/bubbles` | TUI input components |
+| `golang.org/x/crypto` | Argon2id, HKDF, ACME |
+| `github.com/spf13/cobra` | CLI |
+| `github.com/spf13/viper` | Config (server.yaml) |
+| `github.com/golang-jwt/jwt/v5` | JWT Ed25519 |
+| `github.com/oapi-codegen/oapi-codegen` | API codegen (build tool) |
+| `github.com/stretchr/testify` | Test assertions |
+| `github.com/creack/pty` | PTY (Linux/macOS agent) |
+| `github.com/coder/websocket` | WebSocket transport |
+| `modernc.org/sqlite` | SQLite (pure Go, no CGO) |
+
+**Frontend (npm):**
+
+| Package | Purpose |
+|---------|---------|
+| `next`, `react`, `react-dom` | Framework |
+| `tailwindcss`, `tw-animate-css` | Styling |
+| `@radix-ui/*` | shadcn primitives (auto-installed by CLI) |
+| `zod` | Validation |
+| `react-hook-form`, `@hookform/resolvers` | Forms |
+| `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-webgl` | Terminal |
+| `date-fns` | Dates |
+| `cmdk`, `sonner`, `vaul` | shadcn component deps |
+| `openapi-typescript`, `openapi-fetch` | Type-safe API client |
+| `next-themes` | Dark mode |
+| `class-variance-authority`, `clsx`, `tailwind-merge` | CVA + cn() |
+
+**Dev only (npm):**
+
+| Package | Purpose |
+|---------|---------|
+| `@biomejs/biome` | Lint + format |
+| `vitest`, `@testing-library/react`, `@testing-library/jest-dom` | Testing |
+| `typescript`, `@types/react`, `@types/react-dom` | Types |
+
+---
+
 # Global Standards & Guidelines
 
 ## NIST Security Standards (MANDATORY)
@@ -289,19 +406,19 @@ npx shadcn@latest diff [component]
 ```json
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "default",
+  "style": "new-york",
   "rsc": true,
   "tsx": true,
   "tailwind": {
-    "config": "tailwind.config.js",
+    "config": "",
     "css": "app/globals.css",
-    "baseColor": "slate",
     "cssVariables": true
   },
   "aliases": {
     "components": "@/components",
     "utils": "@/lib/utils",
-    "ui": "@/components/ui"
+    "ui": "@/components/ui",
+    "hooks": "@/hooks"
   }
 }
 ```
@@ -341,27 +458,33 @@ export function cn(...inputs: ClassValue[]) {
 - Breaking accessibility by removing ARIA attributes or `forwardRef`
 - Using monolithic prop APIs instead of composition pattern
 - Putting custom components in `components/ui/`
-- Not configuring `tailwindcss-animate` plugin
+- Using `tailwindcss-animate` instead of `tw-animate-css` (Tailwind v4 requires the CSS import, not the plugin)
 
-### Project Structure
+### Project Structure (Frontend)
 ```
-src/
+web/
+├── app/                    # Next.js App Router pages
+│   ├── layout.tsx
+│   ├── page.tsx            # Promo landing page
+│   ├── login/
+│   ├── setup/
+│   └── dashboard/          # Auth-required pages
 ├── components/
-│   ├── ui/          # shadcn components ONLY (CLI-generated)
-│   ├── forms/       # Custom form components
-│   ├── layouts/     # Layout components
-│   └── features/    # Feature components
+│   ├── ui/                 # shadcn components ONLY (CLI-generated)
+│   └── *.tsx               # Custom components (kebab-case)
 ├── hooks/
+│   └── use-*.ts            # Custom hooks (kebab-case)
 ├── lib/
-│   ├── utils.ts     # cn() utility
-│   └── validators.ts # Zod schemas
-└── styles/
-    └── globals.css  # CSS variables for theming
+│   ├── utils.ts            # cn() utility
+│   └── api.ts              # openapi-fetch client
+└── public/
+    ├── fonts/              # Local font files (no CDN)
+    └── og/                 # Pre-generated OG images
 ```
 
 ### Dark Mode (Next.js)
 ```bash
-npm install next-themes
+pnpm add next-themes
 ```
 Use `ThemeProvider` with `attribute="class"`, define `.dark` CSS variables in globals.css.
 

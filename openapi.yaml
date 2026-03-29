@@ -6104,7 +6104,7 @@ components:
           type: string
         databaseEncryption:
           type: boolean
-          description: SQLCipher AES-256-GCM encryption
+          description: App-layer AES-256-GCM encryption on sensitive fields
 
     ServerConfigUpdate:
       type: object
