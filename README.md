@@ -204,7 +204,6 @@ Each log entry includes: who, what, when, where (source IP, agent), and outcome.
 ```
 conduit/
 ├── ce.md                       # Community Edition specification
-├── directive.md                # Project directive (single source of truth)
 ├── openapi.yaml                # OpenAPI 3.1.1 API specification
 ├── cmd/
 │   ├── conduit-server/         # Server binary
@@ -225,7 +224,7 @@ conduit/
 
 ## API Specification
 
-The full REST API is defined in `openapi.yaml` (OpenAPI 3.1.1, ~6,100 lines, 81 paths, 101 operations + 7 webhook callbacks, 40 schemas).
+The full REST API is defined in `openapi.yaml` (OpenAPI 3.1.1, ~6,100 lines, 81 paths, 101 operations + 7 webhook callbacks, 42 schemas).
 
 ```bash
 # Redocly preview
