@@ -540,7 +540,7 @@ paths:
                     type: string
                     format: uri
                     description: URL to redirect browser to after HTTPS restart
-                    example: "https://conduit.example.com/login"
+                    example: "https://conduit.example.com/setup/passkey"
                   estimatedSeconds:
                     type: integer
                     example: 30
@@ -758,6 +758,7 @@ paths:
         **JWT Claims:**
         - `sub` — User ID (UUID v4)
         - `tid` — Tenant ID
+        - `services` — Array of enabled service slugs (e.g. `["remote-access"]`)
         - `roles` — Array of role identifiers
         - `permissions` — Array of permission strings
         - `iat` — Issued at
@@ -2519,7 +2520,8 @@ paths:
                     type: string
                     description: |
                       HMAC-SHA256 agent token. Shown once.
-                      Agent stores this and presents it in HELLO frames on connection.
+                      Agent stores this and presents it in AUTH frames on connection
+                      (separate from the HELLO frame which carries identity only).
                   masterEndpoints:
                     type: object
                     required: [quic, websocket]
@@ -4142,11 +4144,14 @@ paths:
         WebSocket upgrade endpoint for agent connections when QUIC (UDP) is blocked.
         Agent presents token via `Authorization: Bearer <token>` header during upgrade.
 
-        For QUIC, agents connect to `quic://[domain]:443` and present token
-        in the first CWP HELLO frame.
+        For QUIC, agents connect to `quic://[domain]:443` and present identity
+        in the CWP HELLO frame, then authenticate via a separate AUTH frame.
 
-        **CWP Frame Types:** HELLO, AUTH, SHELL_DATA, SHELL_RESIZE,
-        FILE_OP, AGENT_INFO, EXEC.
+        **CWP Frame Types:** HELLO (0x01), AUTH (0x02), SHELL_DATA (0x10),
+        SHELL_RESIZE (0x11), SHELL_START (0x12), SHELL_EXIT (0x13),
+        FILE_LIST (0x20), FILE_READ (0x21), FILE_WRITE (0x22), FILE_STAT (0x23),
+        AGENT_INFO (0x30), EXEC_START (0x40), EXEC_DATA (0x41), EXEC_EXIT (0x42),
+        PING (0xF0), PONG (0xF1). See ce.md for full wire protocol specification.
 
         **Transport precedence:**
         1. QUIC (UDP 443) — preferred, ~5s timeout
@@ -5587,6 +5592,17 @@ components:
             - string
             - "null"
           format: date-time
+        revoked:
+          type: boolean
+          readOnly: true
+          description: Whether this token has been revoked
+        revokedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          readOnly: true
+          description: Timestamp when the token was revoked (null if not revoked)
         createdAt:
           type: string
           format: date-time

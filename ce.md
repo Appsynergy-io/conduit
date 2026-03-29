@@ -446,7 +446,7 @@ The agent must stay connected to the server at all times. Disconnection = blind 
 - Enabled by `--dev` flag or `server.mode: dev` in `server.yaml`
 - Setup token is generated and printed to stdout (same as production)
 - After setup, the token is NOT deleted — it persists as the login credential
-- `POST /api/v1/auth/password/login` with `{email, setupToken}` — returns JWT
+- `POST /api/v1/auth/password/login` with `{email, password}` (setup token used as password value) — returns JWT
 - Server hashes setup token with Argon2id and stores as password_hash
 - WebAuthn requires secure context (HTTPS with valid cert or localhost origin) — self-signed dev certs may not satisfy this, so token auth is always available
 - If passkey registration succeeds in dev mode, both passkey and token auth remain available
@@ -504,6 +504,9 @@ Binary frame format, identical over QUIC streams and WebSocket messages:
 | FILE_WRITE | 0x22 | Server → Agent | Write file content to agent (chunked) |
 | FILE_STAT | 0x23 | Both | Request/response file metadata |
 | AGENT_INFO | 0x30 | Agent → Server | System metrics (CPU, mem, disk) |
+| EXEC_START | 0x40 | Server → Agent | Start bulk exec command |
+| EXEC_DATA | 0x41 | Agent → Server | Streaming exec stdout/stderr |
+| EXEC_EXIT | 0x42 | Agent → Server | Exec process exited (exit code) |
 | PING | 0xF0 | Both | Keepalive |
 | PONG | 0xF1 | Both | Keepalive response |
 
@@ -748,6 +751,7 @@ CREATE TABLE passkeys (
 -- SSO providers (SAML/OIDC)
 CREATE TABLE sso_providers (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     type TEXT NOT NULL,               -- 'saml' or 'oidc'
     name TEXT NOT NULL,
     config TEXT NOT NULL,             -- JSON: provider-specific config
@@ -777,6 +781,7 @@ CREATE TABLE agents (
 -- Join tokens
 CREATE TABLE join_tokens (
     id TEXT PRIMARY KEY,              -- UUID v4 (also the token JTI)
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     type TEXT NOT NULL,               -- 'single_use' or 'persistent'
     name TEXT NOT NULL,
     labels TEXT,                      -- JSON: labels to apply on join
@@ -792,6 +797,7 @@ CREATE TABLE join_tokens (
 -- Active sessions (for session visibility/revocation)
 CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     type TEXT NOT NULL,               -- 'web', 'cli', 'ci'
     source_ip TEXT,
@@ -805,13 +811,14 @@ CREATE TABLE sessions (
 -- Shell sessions (active + closed, for visibility/multiplexing)
 CREATE TABLE shell_sessions (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     agent_id TEXT NOT NULL REFERENCES agents(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     status TEXT NOT NULL DEFAULT 'active', -- active, closed
     shell TEXT,                       -- Shell path (e.g. /bin/bash)
     cols INTEGER,
     rows INTEGER,
-    recording INTEGER NOT NULL DEFAULT 0, -- Boolean: session recording enabled
+    recording INTEGER NOT NULL DEFAULT 1, -- Boolean: session recording enabled (NIST AU-2)
     created_at TEXT NOT NULL,
     closed_at TEXT                     -- NULL while active
 );
@@ -819,6 +826,7 @@ CREATE TABLE shell_sessions (
 -- Shell recordings (asciicast v2, stored on server)
 CREATE TABLE shell_recordings (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     agent_id TEXT NOT NULL REFERENCES agents(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     agent_hostname TEXT,
@@ -833,6 +841,7 @@ CREATE TABLE shell_recordings (
 -- Either user_id or group_id must be set (not both, not neither)
 CREATE TABLE role_assignments (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     role TEXT NOT NULL,               -- org_owner, org_admin, org_member
     user_id TEXT REFERENCES users(id),  -- NULL if assigned to group
     group_id TEXT REFERENCES groups(id), -- NULL if assigned to user
@@ -866,6 +875,7 @@ CREATE TABLE audit_log (
 -- Webhook subscriptions
 CREATE TABLE webhooks (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     url TEXT NOT NULL,
     secret_hash TEXT NOT NULL,        -- HMAC-SHA256 signing key hash
     events TEXT NOT NULL,             -- JSON: ["agent.connected", "auth.login", ...]
@@ -877,6 +887,7 @@ CREATE TABLE webhooks (
 -- Webhook delivery history
 CREATE TABLE webhook_deliveries (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     webhook_id TEXT NOT NULL REFERENCES webhooks(id),
     event_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending', -- success, failed, pending
@@ -891,6 +902,7 @@ CREATE TABLE webhook_deliveries (
 -- Bulk exec jobs (parallel command execution across agents)
 CREATE TABLE bulk_exec_jobs (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     command TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending', -- pending, running, completed, cancelled, failed
     target_count INTEGER,
@@ -905,6 +917,7 @@ CREATE TABLE bulk_exec_jobs (
 -- Binary deploy jobs (signed binary push to agents)
 CREATE TABLE deploy_jobs (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     status TEXT NOT NULL DEFAULT 'uploading', -- uploading, deploying, completed, failed
     target_count INTEGER,
     completed_count INTEGER DEFAULT 0,
@@ -916,6 +929,7 @@ CREATE TABLE deploy_jobs (
 
 CREATE TABLE ci_tokens (
     id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
     token_hash TEXT NOT NULL,         -- SHA-256 hash of token (plain token shown once at creation)
@@ -932,26 +946,37 @@ CREATE INDEX idx_users_tenant_id ON users(tenant_id);
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_agents_tenant_id ON agents(tenant_id);
 CREATE INDEX idx_agents_status ON agents(status);
+CREATE INDEX idx_join_tokens_tenant_id ON join_tokens(tenant_id);
 CREATE INDEX idx_join_tokens_revoked ON join_tokens(revoked);
+CREATE INDEX idx_sessions_tenant_id ON sessions(tenant_id);
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX idx_shell_sessions_tenant_id ON shell_sessions(tenant_id);
 CREATE INDEX idx_shell_sessions_agent_id ON shell_sessions(agent_id);
 CREATE INDEX idx_shell_sessions_user_id ON shell_sessions(user_id);
 CREATE INDEX idx_shell_sessions_status ON shell_sessions(status);
+CREATE INDEX idx_shell_recordings_tenant_id ON shell_recordings(tenant_id);
 CREATE INDEX idx_shell_recordings_agent_id ON shell_recordings(agent_id);
 CREATE INDEX idx_shell_recordings_user_id ON shell_recordings(user_id);
+CREATE INDEX idx_role_assignments_tenant_id ON role_assignments(tenant_id);
 CREATE INDEX idx_role_assignments_user_id ON role_assignments(user_id);
 CREATE INDEX idx_role_assignments_group_id ON role_assignments(group_id);
 CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
 CREATE INDEX idx_audit_log_event_type ON audit_log(event_type);
 CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
 CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
+CREATE INDEX idx_webhooks_tenant_id ON webhooks(tenant_id);
+CREATE INDEX idx_webhook_deliveries_tenant_id ON webhook_deliveries(tenant_id);
 CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
 CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(status);
+CREATE INDEX idx_sso_providers_tenant_id ON sso_providers(tenant_id);
 CREATE INDEX idx_tenant_services_tenant_id ON tenant_services(tenant_id);
+CREATE INDEX idx_bulk_exec_jobs_tenant_id ON bulk_exec_jobs(tenant_id);
 CREATE INDEX idx_bulk_exec_jobs_status ON bulk_exec_jobs(status);
 CREATE INDEX idx_bulk_exec_jobs_created_by ON bulk_exec_jobs(created_by);
+CREATE INDEX idx_deploy_jobs_tenant_id ON deploy_jobs(tenant_id);
 CREATE INDEX idx_deploy_jobs_status ON deploy_jobs(status);
+CREATE INDEX idx_ci_tokens_tenant_id ON ci_tokens(tenant_id);
 CREATE INDEX idx_ci_tokens_user_id ON ci_tokens(user_id);
 ```
 
