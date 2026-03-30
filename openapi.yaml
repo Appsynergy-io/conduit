@@ -2497,9 +2497,14 @@ paths:
                 os:
                   type: string
                   enum: [linux, windows, darwin]
+                  description: Agent operating system
                 arch:
                   type: string
                   enum: [amd64, arm64]
+                  description: |
+                    Agent CPU architecture. Supported build targets:
+                    linux/amd64, linux/arm64, windows/amd64, darwin/arm64.
+                    Other combinations are accepted but no official binaries are provided.
                 version:
                   type: string
                   description: Agent binary version
@@ -5371,6 +5376,8 @@ components:
         arch:
           type: string
           enum: [amd64, arm64]
+          description: |
+            Supported build targets: linux/amd64, linux/arm64, windows/amd64, darwin/arm64.
         version:
           type: string
           description: Agent binary version
@@ -5650,11 +5657,15 @@ components:
 
     ShellRecording:
       type: object
-      required: [id, agentId, userId, duration, createdAt]
+      required: [id, sessionId, agentId, userId, duration, createdAt]
       properties:
         id:
           type: string
           format: uuid
+        sessionId:
+          type: string
+          format: uuid
+          description: Shell session that produced this recording
         agentId:
           type: string
           format: uuid
@@ -5935,6 +5946,10 @@ components:
             - string
             - "null"
           enum: [success, failed, null]
+        createdBy:
+          type: string
+          format: uuid
+          readOnly: true
         createdAt:
           type: string
           format: date-time
@@ -6042,6 +6057,12 @@ components:
             - string
             - "null"
           format: date-time
+        deliveredAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: Timestamp when the delivery succeeded (null if not yet delivered)
         attemptedAt:
           type: string
           format: date-time
