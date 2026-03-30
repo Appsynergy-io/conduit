@@ -743,7 +743,7 @@ CREATE TABLE passkeys (
     algorithm_warning TEXT,           -- non-null if classical (quantum-vulnerable)
     authenticator_type TEXT,          -- 'platform' or 'cross-platform'
     sign_count INTEGER NOT NULL DEFAULT 0,
-    name TEXT,                        -- User-given name ("MacBook Touch ID")
+    display_name TEXT,                -- User-given name ("MacBook Touch ID")
     created_at TEXT NOT NULL,
     last_used_at TEXT
 );
@@ -752,7 +752,7 @@ CREATE TABLE passkeys (
 CREATE TABLE sso_providers (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
-    type TEXT NOT NULL,               -- 'saml' or 'oidc'
+    protocol TEXT NOT NULL,           -- 'saml' or 'oidc'
     name TEXT NOT NULL,
     config TEXT NOT NULL,             -- JSON: provider-specific config
     enabled INTEGER NOT NULL DEFAULT 1,
@@ -790,6 +790,7 @@ CREATE TABLE join_tokens (
     max_uses INTEGER,                 -- NULL for unlimited (persistent only)
     expires_at TEXT,                  -- Nullable; NULL = no expiry (persistent tokens)
     revoked INTEGER DEFAULT 0,
+    revoked_at TEXT,                  -- Nullable; timestamp when revoked
     created_by TEXT REFERENCES users(id),
     created_at TEXT NOT NULL
 );
@@ -827,6 +828,7 @@ CREATE TABLE shell_sessions (
 CREATE TABLE shell_recordings (
     id TEXT PRIMARY KEY,              -- UUID v4
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    session_id TEXT NOT NULL REFERENCES shell_sessions(id),
     agent_id TEXT NOT NULL REFERENCES agents(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     agent_hostname TEXT,
@@ -865,15 +867,15 @@ CREATE TABLE audit_log (
     agent_hostname TEXT,
     source_ip TEXT,
     user_agent TEXT,
-    detail TEXT,                      -- JSON: event-specific payload
+    details TEXT,                     -- JSON: event-specific payload
     outcome TEXT NOT NULL,            -- 'success' or 'failure'
     algorithm_used TEXT,              -- Crypto algorithm used (NIST SP 800-131A)
     algorithm_warning TEXT,           -- Non-null if classical where PQC available
-    created_at TEXT NOT NULL
+    timestamp TEXT NOT NULL           -- UTC timestamp of the event
 );
 
 -- Webhook subscriptions
-CREATE TABLE webhooks (
+CREATE TABLE webhook_subscriptions (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
     url TEXT NOT NULL,
@@ -888,7 +890,7 @@ CREATE TABLE webhooks (
 CREATE TABLE webhook_deliveries (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
-    webhook_id TEXT NOT NULL REFERENCES webhooks(id),
+    subscription_id TEXT NOT NULL REFERENCES webhook_subscriptions(id),
     event_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending', -- success, failed, pending
     http_status INTEGER,
@@ -896,7 +898,7 @@ CREATE TABLE webhook_deliveries (
     attempt_number INTEGER NOT NULL DEFAULT 1,
     next_retry_at TEXT,
     delivered_at TEXT,
-    created_at TEXT NOT NULL
+    attempted_at TEXT NOT NULL
 );
 
 -- Bulk exec jobs (parallel command execution across agents)
@@ -930,7 +932,7 @@ CREATE TABLE deploy_jobs (
 CREATE TABLE ci_tokens (
     id TEXT PRIMARY KEY,              -- UUID v4
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
-    user_id TEXT NOT NULL REFERENCES users(id),
+    created_by TEXT NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
     token_hash TEXT NOT NULL,         -- SHA-256 hash of token (plain token shown once at creation)
     scopes TEXT NOT NULL DEFAULT '[]', -- JSON array of scope strings
@@ -956,6 +958,7 @@ CREATE INDEX idx_shell_sessions_agent_id ON shell_sessions(agent_id);
 CREATE INDEX idx_shell_sessions_user_id ON shell_sessions(user_id);
 CREATE INDEX idx_shell_sessions_status ON shell_sessions(status);
 CREATE INDEX idx_shell_recordings_tenant_id ON shell_recordings(tenant_id);
+CREATE INDEX idx_shell_recordings_session_id ON shell_recordings(session_id);
 CREATE INDEX idx_shell_recordings_agent_id ON shell_recordings(agent_id);
 CREATE INDEX idx_shell_recordings_user_id ON shell_recordings(user_id);
 CREATE INDEX idx_role_assignments_tenant_id ON role_assignments(tenant_id);
@@ -963,11 +966,11 @@ CREATE INDEX idx_role_assignments_user_id ON role_assignments(user_id);
 CREATE INDEX idx_role_assignments_group_id ON role_assignments(group_id);
 CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
 CREATE INDEX idx_audit_log_event_type ON audit_log(event_type);
-CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
+CREATE INDEX idx_audit_log_timestamp ON audit_log(timestamp);
 CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
-CREATE INDEX idx_webhooks_tenant_id ON webhooks(tenant_id);
+CREATE INDEX idx_webhook_subscriptions_tenant_id ON webhook_subscriptions(tenant_id);
 CREATE INDEX idx_webhook_deliveries_tenant_id ON webhook_deliveries(tenant_id);
-CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+CREATE INDEX idx_webhook_deliveries_subscription_id ON webhook_deliveries(subscription_id);
 CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(status);
 CREATE INDEX idx_sso_providers_tenant_id ON sso_providers(tenant_id);
 CREATE INDEX idx_tenant_services_tenant_id ON tenant_services(tenant_id);
@@ -977,7 +980,7 @@ CREATE INDEX idx_bulk_exec_jobs_created_by ON bulk_exec_jobs(created_by);
 CREATE INDEX idx_deploy_jobs_tenant_id ON deploy_jobs(tenant_id);
 CREATE INDEX idx_deploy_jobs_status ON deploy_jobs(status);
 CREATE INDEX idx_ci_tokens_tenant_id ON ci_tokens(tenant_id);
-CREATE INDEX idx_ci_tokens_user_id ON ci_tokens(user_id);
+CREATE INDEX idx_ci_tokens_created_by ON ci_tokens(created_by);
 ```
 
 Migrations embedded in binary, applied automatically at startup.

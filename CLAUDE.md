@@ -71,7 +71,7 @@ Every API endpoint must implement:
 | SI | System and Information Integrity — flaw remediation, malware protection, monitoring |
 | SR | Supply Chain Risk Management — dependency vetting, tampering prevention |
 
-### NIST SP 800-63-4 — Digital Identity
+### NIST SP 800-63B — Digital Identity
 
 - **IAL1**: No proofing | **IAL2**: Moderate verification | **IAL3**: Physical presence + supervised verification
 - **AAL1**: Single-factor | **AAL2**: MFA mandatory (phishing-resistant preferred — FIDO Passkeys) | **AAL3**: Hardware authenticators
@@ -121,7 +121,7 @@ Every API endpoint must implement:
 
 When writing ANY code:
 1. APIs follow SP 800-228 (REC-API-1 through REC-API-26)
-2. Authentication meets SP 800-63-4 AAL2 minimum
+2. Authentication meets SP 800-63B AAL2 minimum
 3. All 20 SP 800-53 control families considered
 4. Development follows SSDF practices (PO, PS, PW, RV)
 5. Security posture aligns with CSF 2.0 six functions
@@ -141,7 +141,9 @@ When writing ANY code:
 - `CLAUDE.md` is the coding rules (how to write code)
 
 ### Project Security Overrides
-This project enforces **TLS 1.3 only** — TLS 1.2 is forbidden. The global NIST SP 800-52 guidance permitting TLS 1.2 as a minimum does not apply to Conduit. See `ce.md` Cryptographic Policy for the full list of forbidden algorithms.
+- **TLS 1.3 only** — TLS 1.2 is forbidden. The global NIST SP 800-52 guidance permitting TLS 1.2 as a minimum does not apply to Conduit.
+- **JWT signing: Ed25519** — The global NIST SP 800-175B guidance recommending RS256/ES256 does not apply. This project uses Ed25519 (future: ML-DSA-65).
+- See `ce.md` Cryptographic Policy for the full list of algorithms and forbidden primitives.
 
 ### Go Patterns
 - **Router:** `chi/v5` — stdlib-compatible `http.Handler`, middleware chain, route groups
