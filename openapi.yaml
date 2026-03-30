@@ -457,6 +457,7 @@ paths:
       tags: [Setup Wizard]
       security: []
       x-nist-controls: [IA-4, IA-12, CM-2, IA-5]
+      x-owasp: [A01, A03, A05, API5, API8]
       x-audit-event: setup.configured
       requestBody:
         required: true
@@ -550,6 +551,8 @@ paths:
           description: Setup already completed
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /setup/passkey:
     post:
@@ -573,6 +576,7 @@ paths:
       tags: [Setup Wizard]
       security: []
       x-nist-controls: [IA-2, IA-12]
+      x-owasp: [A01, A02, A07, API2, API5]
       x-audit-event: setup.passkey.registered
       requestBody:
         required: true
@@ -619,6 +623,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           description: Setup already completed
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   # ════════════════════════════════════════════════════════════════
   # AUTH — WebAuthn / Passkeys
@@ -638,6 +644,8 @@ paths:
 
         **NIST IA-2, IA-5, SP 800-63B AAL2/AAL3.**
       tags: [Auth]
+      x-nist-controls: [IA-2, IA-5]
+      x-owasp: [A07, API2]
       responses:
         "200":
           description: Registration challenge issued
@@ -669,6 +677,7 @@ paths:
         **x-audit-event:** passkey.registered
       tags: [Auth]
       x-nist-controls: [IA-5, AU-12]
+      x-owasp: [A07, A02, API2]
       x-audit-event: passkey.registered
       requestBody:
         required: true
@@ -725,6 +734,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2, AC-7]
+      x-owasp: [A07, API2]
       requestBody:
         required: true
         content:
@@ -769,6 +779,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2, AC-7, AC-12, SC-23, AU-12]
+      x-owasp: [A07, A02, API2]
       x-audit-event: auth.login.webauthn
       requestBody:
         required: true
@@ -804,6 +815,7 @@ paths:
         creation date, and last used date.
       tags: [Auth]
       x-nist-controls: [IA-5]
+      x-owasp: [A01, API1, API3]
       responses:
         "200":
           description: List of registered passkeys
@@ -834,6 +846,7 @@ paths:
         **x-audit-event:** passkey.deleted
       tags: [Auth]
       x-nist-controls: [IA-5, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: passkey.deleted
       parameters:
         - name: credentialId
@@ -884,6 +897,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [AC-7, AU-12]
+      x-owasp: [A07, A02, A03, API2]
       x-audit-event: auth.login.password
       requestBody:
         required: true
@@ -942,6 +956,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [SC-23, AC-12]
+      x-owasp: [A07, A02, API2]
       x-audit-event: auth.token.refreshed
       requestBody:
         required: true
@@ -953,6 +968,7 @@ paths:
               properties:
                 refreshToken:
                   type: string
+                  writeOnly: true
               additionalProperties: false
       responses:
         "200":
@@ -967,6 +983,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/token/revoke:
     post:
@@ -979,6 +997,7 @@ paths:
         **x-audit-event:** auth.token.revoked
       tags: [Auth]
       x-nist-controls: [AC-12, AU-12]
+      x-owasp: [A07, API2]
       x-audit-event: auth.token.revoked
       requestBody:
         required: true
@@ -990,6 +1009,7 @@ paths:
               properties:
                 token:
                   type: string
+                  writeOnly: true
                 tokenType:
                   type: string
                   enum: [access, refresh]
@@ -998,6 +1018,8 @@ paths:
       responses:
         "204":
           description: Token revoked
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1023,6 +1045,8 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2]
+      x-owasp: [A07, API2, API4]
+      x-audit-event: auth.device.flow_started
       requestBody:
         required: true
         content:
@@ -1067,6 +1091,10 @@ paths:
                     type: integer
                     description: Minimum seconds between poll requests
                     example: 5
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/device/poll:
     post:
@@ -1080,6 +1108,8 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2]
+      x-owasp: [A07, API2, API4]
+      x-audit-event: auth.device.token_issued
       requestBody:
         required: true
         content:
@@ -1090,6 +1120,7 @@ paths:
               properties:
                 deviceCode:
                   type: string
+                  writeOnly: true
               additionalProperties: false
       responses:
         "200":
@@ -1115,6 +1146,8 @@ paths:
                     enum: [authorization_pending, slow_down, expired_token]
                   retryAfter:
                     type: integer
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/device/authorize:
     post:
@@ -1125,6 +1158,7 @@ paths:
         Links the device code to the authenticated session.
       tags: [Auth]
       x-nist-controls: [IA-2, AU-12]
+      x-owasp: [A01, A07, API2, API5]
       x-audit-event: auth.device.authorized
       requestBody:
         required: true
@@ -1165,6 +1199,7 @@ paths:
         **NIST IA-5:** Machine-to-machine authenticator management.
       tags: [Auth]
       x-nist-controls: [IA-5]
+      x-owasp: [A01, API1, API3, API5]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -1197,6 +1232,7 @@ paths:
         **x-audit-event:** ci_token.created
       tags: [Auth]
       x-nist-controls: [IA-5, SC-28, AU-12]
+      x-owasp: [A01, A02, API2, API5]
       x-audit-event: ci_token.created
       requestBody:
         required: true
@@ -1285,6 +1321,7 @@ paths:
         **x-audit-event:** ci_token.revoked
       tags: [Auth]
       x-nist-controls: [IA-5, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: ci_token.revoked
       parameters:
         - name: tokenId
@@ -1317,6 +1354,7 @@ paths:
         SSO is an additional identity source, not a replacement.
       tags: [Auth]
       x-nist-controls: [IA-2]
+      x-owasp: [A01, API1, API5]
       responses:
         "200":
           description: List of SSO providers
@@ -1339,6 +1377,7 @@ paths:
       summary: Configure a new SSO provider
       tags: [Auth]
       x-nist-controls: [IA-2, AU-12]
+      x-owasp: [A01, A05, API5, API8]
       x-audit-event: sso_provider.created
       requestBody:
         required: true
@@ -1366,6 +1405,7 @@ paths:
       summary: Get SSO provider details
       tags: [Auth]
       x-nist-controls: [IA-2]
+      x-owasp: [A01, API1, API5]
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
       responses:
@@ -1386,6 +1426,7 @@ paths:
       summary: Update SSO provider
       tags: [Auth]
       x-nist-controls: [IA-2, AU-12]
+      x-owasp: [A01, A05, API5, API8]
       x-audit-event: sso_provider.updated
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1415,6 +1456,7 @@ paths:
       summary: Delete SSO provider
       tags: [Auth]
       x-nist-controls: [IA-2, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: sso_provider.deleted
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1435,6 +1477,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2]
+      x-owasp: [A07, A02, API2, API10]
       x-audit-event: auth.login.saml
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1455,6 +1498,12 @@ paths:
           description: Redirect to dashboard with session token
         "401":
           description: SAML assertion validation failed
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/sso/{providerId}/oidc/callback:
     get:
@@ -1463,6 +1512,7 @@ paths:
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2]
+      x-owasp: [A07, A02, API2, API10]
       x-audit-event: auth.login.oidc
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1481,6 +1531,12 @@ paths:
           description: Redirect to dashboard with session token
         "401":
           description: OIDC token validation failed
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   # ════════════════════════════════════════════════════════════════
   # SESSIONS
@@ -1497,6 +1553,7 @@ paths:
         **NIST AC-11, AC-12:** Session visibility and management.
       tags: [Sessions]
       x-nist-controls: [AC-11, AC-12]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -1536,6 +1593,7 @@ paths:
         **x-audit-event:** session.revoked
       tags: [Sessions]
       x-nist-controls: [AC-12, AU-12]
+      x-owasp: [A01, A07, API1]
       x-audit-event: session.revoked
       parameters:
         - name: sessionId
@@ -1565,6 +1623,7 @@ paths:
         **x-audit-event:** session.revoked_all
       tags: [Sessions]
       x-nist-controls: [AC-12, AU-12]
+      x-owasp: [A01, A07, API5]
       x-audit-event: session.revoked_all
       responses:
         "200":
@@ -1596,6 +1655,7 @@ paths:
         **NIST AC-2:** Account management.
       tags: [Users]
       x-nist-controls: [AC-2]
+      x-owasp: [A01, API1, API3, API5]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -1651,6 +1711,7 @@ paths:
         **x-audit-event:** user.created
       tags: [Users]
       x-nist-controls: [AC-2, IA-4, AU-12]
+      x-owasp: [A01, A03, API3, API5]
       x-audit-event: user.created
       requestBody:
         required: true
@@ -1702,6 +1763,7 @@ paths:
         **x-audit-event:** user.updated
       tags: [Users]
       x-nist-controls: [AC-2, AU-12]
+      x-owasp: [A01, A03, API1, API3, API5]
       x-audit-event: user.updated
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1733,6 +1795,7 @@ paths:
         **x-audit-event:** user.deleted
       tags: [Users]
       x-nist-controls: [AC-2, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: user.deleted
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1756,6 +1819,7 @@ paths:
         **x-audit-event:** user.suspended
       tags: [Users]
       x-nist-controls: [AC-2, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: user.suspended
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1779,6 +1843,7 @@ paths:
       summary: Reinstate suspended user
       tags: [Users]
       x-nist-controls: [AC-2, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: user.reinstated
       parameters:
         - $ref: "#/components/parameters/PathUserId"
@@ -1802,6 +1867,7 @@ paths:
       summary: Get current authenticated user
       tags: [Users]
       x-nist-controls: [IA-2]
+      x-owasp: [A01, API1, API3]
       responses:
         "200":
           description: Current user details
@@ -1824,6 +1890,7 @@ paths:
       summary: List groups
       tags: [Groups]
       x-nist-controls: [AC-3]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -1854,6 +1921,7 @@ paths:
       summary: Create a group
       tags: [Groups]
       x-nist-controls: [AC-3, AU-12]
+      x-owasp: [A01, A03, API3, API5]
       x-audit-event: group.created
       requestBody:
         required: true
@@ -1881,6 +1949,7 @@ paths:
       summary: Get group details
       tags: [Groups]
       x-nist-controls: [AC-3]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
       responses:
@@ -1901,6 +1970,7 @@ paths:
       summary: Update group
       tags: [Groups]
       x-nist-controls: [AC-3, AU-12]
+      x-owasp: [A01, A03, API1, API3, API5]
       x-audit-event: group.updated
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -1930,6 +2000,7 @@ paths:
       summary: Delete group
       tags: [Groups]
       x-nist-controls: [AC-3, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: group.deleted
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -1949,6 +2020,7 @@ paths:
       summary: List group members
       tags: [Groups]
       x-nist-controls: [AC-3]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
         - $ref: "#/components/parameters/CursorParam"
@@ -1978,6 +2050,7 @@ paths:
       summary: Add user to group
       tags: [Groups]
       x-nist-controls: [AC-3, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: group.member_added
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -2013,6 +2086,7 @@ paths:
       summary: Remove user from group
       tags: [Groups]
       x-nist-controls: [AC-3, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: group.member_removed
       parameters:
         - $ref: "#/components/parameters/PathGroupId"
@@ -2045,6 +2119,7 @@ paths:
         **NIST AC-3, AC-6:** Access enforcement, least privilege.
       tags: [RBAC]
       x-nist-controls: [AC-3, AC-6]
+      x-owasp: [A01, API5]
       responses:
         "200":
           description: List of roles
@@ -2069,6 +2144,7 @@ paths:
       summary: List role assignments
       tags: [RBAC]
       x-nist-controls: [AC-3, AC-6]
+      x-owasp: [A01, API1, API3, API5]
       parameters:
         - name: userId
           in: query
@@ -2109,6 +2185,7 @@ paths:
       summary: Assign role to user or group
       tags: [RBAC]
       x-nist-controls: [AC-3, AC-6, AU-12]
+      x-owasp: [A01, API5]
       x-audit-event: rbac.assignment.created
       requestBody:
         required: true
@@ -2136,6 +2213,7 @@ paths:
       summary: Remove role assignment
       tags: [RBAC]
       x-nist-controls: [AC-3, AC-6, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: rbac.assignment.deleted
       parameters:
         - name: assignmentId
@@ -2161,6 +2239,7 @@ paths:
       description: Lists all available permissions that can be assigned via roles.
       tags: [RBAC]
       x-nist-controls: [AC-3]
+      x-owasp: [A01, API5]
       responses:
         "200":
           description: List of permissions
@@ -2206,6 +2285,7 @@ paths:
         **NIST CM-7, SI-4:** Least functionality and system monitoring.
       tags: [Agents]
       x-nist-controls: [CM-7, SI-4]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -2270,6 +2350,7 @@ paths:
         transport type, OS details.
       tags: [Agents]
       x-nist-controls: [CM-7, SI-4]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
       responses:
@@ -2291,6 +2372,7 @@ paths:
       description: Update agent display name, labels, or group assignments.
       tags: [Agents]
       x-nist-controls: [CM-3, AU-12]
+      x-owasp: [A01, A03, API1, API3]
       x-audit-event: agent.updated
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2344,6 +2426,7 @@ paths:
         **x-audit-event:** agent.deleted
       tags: [Agents]
       x-nist-controls: [AC-6, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: agent.deleted
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2394,6 +2477,7 @@ paths:
         **x-audit-event:** agent.join_token.created
       tags: [Agents]
       x-nist-controls: [IA-5, AU-12]
+      x-owasp: [A01, A02, API2, API5]
       x-audit-event: agent.join_token.created
       requestBody:
         required: true
@@ -2448,6 +2532,7 @@ paths:
       summary: Revoke a join token
       tags: [Agents]
       x-nist-controls: [IA-5, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: agent.join_token.revoked
       parameters:
         - name: tokenId
@@ -2480,6 +2565,7 @@ paths:
       tags: [Agents]
       security: []
       x-nist-controls: [IA-2, IA-5]
+      x-owasp: [A02, A07, API2]
       x-audit-event: agent.registered
       requestBody:
         required: true
@@ -2491,6 +2577,7 @@ paths:
               properties:
                 joinToken:
                   type: string
+                  writeOnly: true
                   description: Single-use or persistent join token
                 hostname:
                   type: string
@@ -2516,7 +2603,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [agentId, agentToken, masterEndpoints]
+                required: [agentId, agentToken, serverFingerprint, masterEndpoints]
                 properties:
                   agentId:
                     type: string
@@ -2527,6 +2614,10 @@ paths:
                       HMAC-SHA256 agent token. Shown once.
                       Agent stores this and presents it in AUTH frames on connection
                       (separate from the HELLO frame which carries identity only).
+                  serverFingerprint:
+                    type: string
+                    description: SHA-256 fingerprint of the server's public key for TOFU verification
+                    example: "sha256:Ab3dEf..."
                   masterEndpoints:
                     type: object
                     required: [quic, websocket]
@@ -2541,8 +2632,14 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           description: Invalid or expired join token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /agents/{agentId}/metrics:
     get:
@@ -2556,6 +2653,7 @@ paths:
         **NIST SI-4:** System monitoring.
       tags: [Agents, Metrics]
       x-nist-controls: [SI-4]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - name: period
@@ -2597,6 +2695,7 @@ paths:
         **x-audit-event:** agent.update.triggered
       tags: [Agents, Binary Signing]
       x-nist-controls: [SI-2, SI-7]
+      x-owasp: [A01, A08, API1, API5]
       x-audit-event: agent.update.triggered
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2652,6 +2751,7 @@ paths:
         **x-audit-event:** agent.reboot
       tags: [Agents]
       x-nist-controls: [AC-6, AU-12]
+      x-owasp: [A01, API1, API5, API6]
       x-audit-event: agent.reboot
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2672,6 +2772,8 @@ paths:
       responses:
         "202":
           description: Reboot command sent
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2687,6 +2789,7 @@ paths:
         **NIST AC-6:** Least privilege — requires elevated role.
       tags: [Agents]
       x-nist-controls: [AC-6, AU-12]
+      x-owasp: [A01, API1, API5, API6]
       x-audit-event: agent.poweroff
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2706,6 +2809,8 @@ paths:
       responses:
         "202":
           description: Poweroff command sent
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2727,6 +2832,7 @@ paths:
         Used for building filter UIs and targeting bulk operations.
       tags: [Labels]
       x-nist-controls: [CM-7]
+      x-owasp: [A01, API1]
       responses:
         "200":
           description: Label summary
@@ -2768,6 +2874,7 @@ paths:
       summary: List active shell sessions on agent
       tags: [Shell]
       x-nist-controls: [AU-2]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
       responses:
@@ -2801,6 +2908,7 @@ paths:
         **x-audit-event:** shell.session.started
       tags: [Shell]
       x-nist-controls: [AU-2, AU-3]
+      x-owasp: [A01, A03, API1, API5]
       x-audit-event: shell.session.started
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2848,6 +2956,7 @@ paths:
       summary: Terminate a shell session
       tags: [Shell]
       x-nist-controls: [AC-12, AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: shell.session.terminated
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2882,6 +2991,7 @@ paths:
         - `{"type": "exit", "code": 0}` — session ended
       tags: [Shell]
       x-nist-controls: [AU-2, AU-3]
+      x-owasp: [A01, A03, API1]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - $ref: "#/components/parameters/PathSessionId"
@@ -2902,6 +3012,7 @@ paths:
       description: Sends a SHELL_RESIZE CWP frame to the agent.
       tags: [Shell]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, API1, API4]
       x-audit-event: shell.session.resized
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -2924,6 +3035,8 @@ paths:
       responses:
         "200":
           description: Resize applied
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2940,6 +3053,7 @@ paths:
         Recordings can be played back in the dashboard.
       tags: [Shell]
       x-nist-controls: [AU-9]
+      x-owasp: [A01, A09, API1, API3]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -2978,6 +3092,7 @@ paths:
       summary: Get recording metadata
       tags: [Shell]
       x-nist-controls: [AU-9]
+      x-owasp: [A01, API1, API3]
       parameters:
         - name: recordingId
           in: path
@@ -3005,6 +3120,7 @@ paths:
       summary: Download recording data (asciicast v2)
       tags: [Shell]
       x-nist-controls: [AU-9]
+      x-owasp: [A01, API1]
       parameters:
         - name: recordingId
           in: path
@@ -3042,6 +3158,7 @@ paths:
         **x-audit-event:** file.listed
       tags: [Files]
       x-nist-controls: [AU-2]
+      x-owasp: [A01, A03, API1]
       x-audit-event: file.listed
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -3090,6 +3207,7 @@ paths:
         **x-audit-event:** file.downloaded
       tags: [Files]
       x-nist-controls: [AU-2, AU-12]
+      x-owasp: [A01, A03, API1]
       x-audit-event: file.downloaded
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -3135,6 +3253,7 @@ paths:
         **x-audit-event:** file.uploaded
       tags: [Files]
       x-nist-controls: [AU-2, AU-12]
+      x-owasp: [A01, A03, A10, API1, API4]
       x-audit-event: file.uploaded
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -3211,6 +3330,7 @@ paths:
       summary: Delete a file or directory on agent
       tags: [Files]
       x-nist-controls: [AU-2, AU-12]
+      x-owasp: [A01, A03, API1, API5]
       x-audit-event: file.deleted
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -3245,6 +3365,7 @@ paths:
       summary: Rename or move a file on agent
       tags: [Files]
       x-nist-controls: [AU-2, AU-12]
+      x-owasp: [A01, A03, API1]
       x-audit-event: file.renamed
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -3279,6 +3400,7 @@ paths:
       summary: Create a directory on agent
       tags: [Files]
       x-nist-controls: [AU-2, AU-12]
+      x-owasp: [A01, A03, API1]
       x-audit-event: file.mkdir
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
@@ -3376,6 +3498,7 @@ paths:
         **x-audit-event:** exec.bulk.started
       tags: [Bulk Operations]
       x-nist-controls: [AU-2, AU-12]
+      x-owasp: [A01, A03, API1, API4, API5, API6]
       x-audit-event: exec.bulk.started
       requestBody:
         required: true
@@ -3423,6 +3546,7 @@ paths:
       summary: Get bulk execution job status
       tags: [Bulk Operations]
       x-nist-controls: [AU-2]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathJobId"
       responses:
@@ -3452,6 +3576,7 @@ paths:
         - `{"type": "complete", "summary": {...}}` — all agents done
       tags: [Bulk Operations]
       x-nist-controls: [AU-2]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathJobId"
       responses:
@@ -3470,6 +3595,7 @@ paths:
       summary: Cancel a running bulk exec job
       tags: [Bulk Operations]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: exec.bulk.cancelled
       parameters:
         - $ref: "#/components/parameters/PathJobId"
@@ -3492,6 +3618,7 @@ paths:
         and optionally executes a post-deploy command.
       tags: [Bulk Operations]
       x-nist-controls: [SI-2, SI-7, AU-12]
+      x-owasp: [A01, A03, A08, API1, API4, API5, API6]
       x-audit-event: deploy.started
       requestBody:
         required: true
@@ -3524,6 +3651,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeployJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3548,6 +3677,7 @@ paths:
         **NIST AU-2, AU-3, AU-6, AU-9, AU-10, AU-12.**
       tags: [Audit]
       x-nist-controls: [AU-2, AU-3, AU-6, AU-9, AU-10, AU-12]
+      x-owasp: [A01, A09, API1, API3, API5]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -3616,6 +3746,7 @@ paths:
       summary: Get audit event details
       tags: [Audit]
       x-nist-controls: [AU-9]
+      x-owasp: [A01, A09, API1, API3]
       parameters:
         - name: eventId
           in: path
@@ -3644,6 +3775,7 @@ paths:
       description: Export filtered audit events as CSV or JSON for compliance reporting.
       tags: [Audit]
       x-nist-controls: [AU-9]
+      x-owasp: [A01, A09, API1, API4, API5]
       x-audit-event: audit.exported
       requestBody:
         required: true
@@ -3730,6 +3862,7 @@ paths:
         **x-audit-event:** webhook.subscription.created
       tags: [Webhooks]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, A10, API1, API5, API7]
       x-audit-event: webhook.subscription.created
       requestBody:
         required: true
@@ -3757,6 +3890,7 @@ paths:
       summary: Get webhook subscription
       tags: [Webhooks]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
       responses:
@@ -3777,6 +3911,7 @@ paths:
       summary: Update webhook subscription
       tags: [Webhooks]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, A10, API1, API3, API7]
       x-audit-event: webhook.subscription.updated
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
@@ -3793,6 +3928,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WebhookSubscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3804,6 +3941,7 @@ paths:
       summary: Delete webhook subscription
       tags: [Webhooks]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, API1, API5]
       x-audit-event: webhook.subscription.deleted
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
@@ -3823,6 +3961,8 @@ paths:
       summary: Send test webhook event
       tags: [Webhooks]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, A10, API1, API7]
+      x-audit-event: webhook.subscription.tested
       parameters:
         - $ref: "#/components/parameters/PathSubscriptionId"
       responses:
@@ -3921,6 +4061,7 @@ paths:
         - `system` — server-level events
       tags: [EventBus]
       x-nist-controls: [SI-4]
+      x-owasp: [A01, A07, API1, API2, API4]
       parameters:
         - name: channels
           in: query
@@ -3951,6 +4092,7 @@ paths:
         **NIST CM-2, CM-6:** Baseline configuration and settings.
       tags: [Server Config]
       x-nist-controls: [CM-2, CM-6]
+      x-owasp: [A01, API1, API3, API5]
       responses:
         "200":
           description: Server configuration
@@ -3973,6 +4115,7 @@ paths:
         **x-audit-event:** config.updated
       tags: [Server Config]
       x-nist-controls: [CM-3]
+      x-owasp: [A01, A05, API3, API5, API8]
       x-audit-event: config.updated
       requestBody:
         required: true
@@ -4022,6 +4165,7 @@ paths:
         verifies the JWT includes the required service slug before routing.
       tags: [Services]
       x-nist-controls: [AC-3]
+      x-owasp: [A01, API1, API3]
       responses:
         "200":
           description: List of enabled services
@@ -4049,6 +4193,7 @@ paths:
         Returns 404 if the service is not enabled for this tenant.
       tags: [Services]
       x-nist-controls: [AC-3]
+      x-owasp: [A01, API1, API3]
       parameters:
         - name: serviceSlug
           in: path
@@ -4082,6 +4227,7 @@ paths:
       description: Returns TLS certificate status from Let's Encrypt ACME provisioning.
       tags: [ACME]
       x-nist-controls: [SC-8]
+      x-owasp: [A01, A02, API1, API5]
       responses:
         "200":
           description: ACME certificate status
@@ -4128,6 +4274,7 @@ paths:
       summary: Force ACME certificate renewal
       tags: [ACME]
       x-nist-controls: [SC-8, AU-12]
+      x-owasp: [A01, A02, API5, API6]
       x-audit-event: acme.renewed
       responses:
         "202":
@@ -4167,6 +4314,8 @@ paths:
       tags: [Agents]
       security:
         - AgentToken: []
+      x-nist-controls: [IA-2, AU-12]
+      x-owasp: [A02, A07, API2, API4]
       x-audit-event: agent.connected
       parameters:
         - name: Connection
@@ -4186,8 +4335,16 @@ paths:
           description: WebSocket upgrade — CWP protocol begins
         "401":
           description: Invalid agent token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
         "403":
           description: Agent not registered or revoked
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 
 # ══════════════════════════════════════════════════════════════════
 # WEBHOOKS (Server → External)
@@ -4620,6 +4777,10 @@ components:
       headers:
         X-Request-Id:
           $ref: "#/components/headers/X-Request-Id"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/X-Content-Type-Options"
+        Strict-Transport-Security:
+          $ref: "#/components/headers/Strict-Transport-Security"
 
     Unauthorized:
       description: "401 — Authentication required (NIST IA-2)"
@@ -4630,6 +4791,10 @@ components:
       headers:
         X-Request-Id:
           $ref: "#/components/headers/X-Request-Id"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/X-Content-Type-Options"
+        Strict-Transport-Security:
+          $ref: "#/components/headers/Strict-Transport-Security"
 
     Forbidden:
       description: "403 — Insufficient permissions (NIST AC-3, AC-6)"
@@ -4640,6 +4805,10 @@ components:
       headers:
         X-Request-Id:
           $ref: "#/components/headers/X-Request-Id"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/X-Content-Type-Options"
+        Strict-Transport-Security:
+          $ref: "#/components/headers/Strict-Transport-Security"
 
     NotFound:
       description: "404 — Resource not found"
@@ -4650,6 +4819,10 @@ components:
       headers:
         X-Request-Id:
           $ref: "#/components/headers/X-Request-Id"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/X-Content-Type-Options"
+        Strict-Transport-Security:
+          $ref: "#/components/headers/Strict-Transport-Security"
 
     Conflict:
       description: "409 — Resource conflict (NIST SI-10)"
@@ -4660,6 +4833,10 @@ components:
       headers:
         X-Request-Id:
           $ref: "#/components/headers/X-Request-Id"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/X-Content-Type-Options"
+        Strict-Transport-Security:
+          $ref: "#/components/headers/Strict-Transport-Security"
 
     TooManyRequests:
       description: "429 — Rate limit exceeded (NIST AC-7)"
@@ -4682,6 +4859,10 @@ components:
           description: Remaining requests in current window
         X-Request-Id:
           $ref: "#/components/headers/X-Request-Id"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/X-Content-Type-Options"
+        Strict-Transport-Security:
+          $ref: "#/components/headers/Strict-Transport-Security"
 
   # ──────────────────────────────────────────────────────────────
   # HEADERS
@@ -4910,6 +5091,7 @@ components:
       type: object
       description: Authenticator attestation response
       required: [id, rawId, type, response]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -4923,6 +5105,7 @@ components:
         response:
           type: object
           required: [clientDataJSON, attestationObject]
+          additionalProperties: false
           properties:
             clientDataJSON:
               type: string
@@ -4935,6 +5118,7 @@ components:
       type: object
       description: Authenticator assertion response
       required: [id, rawId, type, response]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -4948,6 +5132,7 @@ components:
         response:
           type: object
           required: [clientDataJSON, authenticatorData, signature]
+          additionalProperties: false
           properties:
             clientDataJSON:
               type: string
@@ -5583,6 +5768,7 @@ components:
           enum: [single_use, persistent]
         token:
           type: string
+          writeOnly: true
           description: Token value (only included on creation)
         labels:
           type: object

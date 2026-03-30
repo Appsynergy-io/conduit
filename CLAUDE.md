@@ -133,6 +133,77 @@ When writing ANY code:
 
 ---
 
+## MANDATORY: OWASP Compliance
+
+All code MUST comply with OWASP Top 10 (2021), OWASP API Security Top 10 (2023), and OWASP ASVS v4.0.3 (Level 2, Level 3 for auth/crypto). These are non-negotiable.
+
+### OWASP Top 10 (2021)
+
+| ID | Risk | Mandatory Controls |
+|---|---|---|
+| **A01** | Broken Access Control | Deny by default. Server-side RBAC on every handler. Verify resource ownership on every DB query (`WHERE id = ? AND user_id = ?` or role check). Never trust client-supplied IDs. Short-lived JWTs. Functional access control tests for every role × endpoint. |
+| **A02** | Cryptographic Failures | TLS 1.3 only. AES-256-GCM at rest. Argon2id for passwords. Ed25519 for JWTs. `crypto/rand` for all randomness (never `math/rand`). `Cache-Control: no-store` on sensitive responses. Keys in config/env, never source code. |
+| **A03** | Injection | Parameterized SQL only (never `fmt.Sprintf` for SQL). `oapi-codegen` validates request schemas before handlers. No `os/exec` with user input. No `dangerouslySetInnerHTML` with user input. Server-side positive validation (allowlists). |
+| **A04** | Insecure Design | Threat model (STRIDE) every feature. Business logic rate limits per operation. `tenant_id` on every table. Plausibility checks at every tier. Tests validate critical flows against threat model. |
+| **A05** | Security Misconfiguration | No debug mode in production. Security headers on every response (CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy). Custom error pages via RFC 9457. Restrict HTTP methods per route. CORS explicit allowlist only. |
+| **A06** | Vulnerable & Outdated Components | `go.sum` + `pnpm-lock.yaml` for integrity. `govulncheck` + `npm audit` in CI. SBOM per release. Only approved dependencies per CLAUDE.md. |
+| **A07** | Identification & Authentication Failures | WebAuthn/passkeys primary (AAL2 min). Anti-brute-force: max 100 failed/hour. Argon2id hashing. Session tokens: 64+ bits entropy, regenerated on auth state change. Identical error messages for login/registration (no enumeration). |
+| **A08** | Software & Data Integrity Failures | All assets embedded (`embed.FS`), zero CDN. Signed releases. CI/CD branch protection + required reviews. JSON-only deserialization, validated against schemas. No untrusted deserialization into executable structures. |
+| **A09** | Security Logging & Monitoring Failures | `slog` structured JSON. Log all auth events, authz decisions, data changes. Never log passwords/tokens/PII/keys. Log encoding prevents injection. Alerting on failed auth spikes, privilege escalation attempts. |
+| **A10** | Server-Side Request Forgery | URL allowlists for outbound fetching. Block internal IPs (127/8, 10/8, 172.16/12, 192.168/16, 169.254.169.254). Validate URL scheme (https only). Disable HTTP redirects for server-side requests. Never return raw fetched responses. |
+
+### OWASP API Security Top 10 (2023)
+
+| ID | Risk | Mandatory Controls |
+|---|---|---|
+| **API1** | Broken Object Level Authorization (BOLA) | Every DB read/write checks ownership or role. UUIDs for all resource IDs (never sequential). `middleware.UserFromCtx(ctx)` verified against resource owner. Table-driven tests: user A cannot access user B's resources. |
+| **API2** | Broken Authentication | WebAuthn passkeys (AAL2). Stricter rate limits on auth endpoints than general. Account lockout after repeated failures. Re-confirm current password for sensitive changes. API keys for service auth only. JWT validation on every request. |
+| **API3** | Broken Object Property Level Authorization | Explicit field selection in SQL (`SELECT id, name` — never `SELECT *`). Response DTOs from `oapi-codegen` define returned fields. Never bind raw request body to DB model. Map explicitly: `user.Name = req.Name`. |
+| **API4** | Unrestricted Resource Consumption | Rate limiting middleware (per-user, per-IP). `http.MaxBytesReader` on every handler. Enforce max `page_size` (100). `maxLength`/`maxItems` in OpenAPI. `context.WithTimeout` on all DB queries and external calls. Upload file size limits. |
+| **API5** | Broken Function Level Authorization | Default deny on all routes. RBAC middleware checks role before handler. Admin routes use separate route group. Never rely on client-side role checks. Audit all endpoints against role matrix in CI tests. |
+| **API6** | Unrestricted Access to Sensitive Business Flows | Per-operation rate limits (not just per-endpoint). Pattern analysis for non-human timing. Business logic plausibility checks. Bot detection on sensitive flows. |
+| **API7** | Server-Side Request Forgery | Same as A10 above. Validate webhook URLs against allowlists. Validate agent identity via token, never by network location. Block cloud metadata endpoints. |
+| **API8** | Security Misconfiguration | Enforce `Content-Type: application/json`. CORS explicit origin allowlist (never `null`). RFC 9457 errors only. TLS 1.3 only. Strip `Server` header. |
+| **API9** | Improper Inventory Management | Single OpenAPI spec is source of truth. `oapi-codegen` generates server interface — undocumented endpoints cannot exist. No beta endpoints without full security middleware. API inventory in spec with auth requirements and rate limits. |
+| **API10** | Unsafe Consumption of APIs | Validate/sanitize all external API data before processing. TLS required for all outbound. Disable redirect following. Timeouts on all external HTTP calls (`http.Client{Timeout: 10 * time.Second}`). Treat external data as untrusted input. |
+
+### OWASP ASVS v4.0.3 — Applicable Chapters
+
+Target **Level 2** for all chapters, **Level 3** for V2 (Auth), V3 (Sessions), V6 (Crypto).
+
+| Chapter | Name | Key Requirements |
+|---|---|---|
+| **V1** | Architecture & Threat Modeling | Single vetted auth mechanism. Server-side enforcement only. Explicit key management policy. Consistent structured logging. Data classified into protection levels. |
+| **V2** | Authentication (L3) | 12+ char passwords, 64+ max, Unicode, no composition rules, no forced rotation, breach list check, allow paste. Argon2id. Max 100 failed/hour. Phishing-resistant MFA (FIDO2). |
+| **V3** | Session Management (L3) | New token on auth. 64-bit min entropy. `Secure; HttpOnly; SameSite` cookies. `__Host-` prefix. 12hr/30min timeouts. Invalidate on logout. Re-auth before sensitive ops. |
+| **V4** | Access Control | Server-side enforcement. IDOR protection on CRUD. Anti-CSRF. No directory browsing. Segregation of duties. |
+| **V5** | Validation & Encoding | Mass assignment protection. Schema validation. Parameterized queries. Context-specific output encoding. No `eval()`. SSRF prevention. |
+| **V6** | Stored Cryptography (L3) | CSPRNG only. Approved algorithms only. No ECB/MD5/SHA-1/3DES. Authenticated encryption (GCM). Constant-time comparisons. Crypto agility. |
+| **V7** | Error Handling & Logging | No credentials in logs. Log all auth/authz decisions. Encode logs to prevent injection. Generic errors with unique request IDs. Last-resort error handler (`recover()` middleware). |
+| **V8** | Data Protection | Anti-caching headers on sensitive responses. No sensitive data in browser storage. Sensitive data in HTTP body only (never query strings). Data retention/auto-delete policies. |
+| **V9** | Communications | TLS 1.3 on all connections. Strong cipher suites only. Trusted TLS certs. OCSP stapling. Log TLS failures. |
+| **V10** | Malicious Code | `gosec` + `staticcheck` in CI. No hardcoded creds. All assets embedded. Signed releases. |
+| **V11** | Business Logic | Sequential processing (no step skipping). Per-user rate limits. TOCTOU race condition protection (`sync.Mutex` or DB locking). Unusual activity monitoring. |
+| **V12** | Files & Resources | Max file size limits. Content-type validation by content (not extension). Path traversal prevention (`filepath.Clean`). Store outside web root. `Content-Disposition: attachment` for downloads. |
+| **V13** | API & Web Service | No sensitive data in URLs. Authorization at URI and resource level. Reject unexpected content types (406/415). JSON schema validation. CSRF via SameSite + Origin validation. |
+| **V14** | Configuration | Debug disabled in prod. No version info in headers. Content-Type with charset. CSP, HSTS, X-Content-Type-Options, Referrer-Policy. CORS allowlist. `govulncheck` + `npm audit` in CI. SBOM maintained. |
+
+### OWASP Enforcement Rules
+
+When writing ANY code:
+1. Every handler checks resource ownership (BOLA — API1, A01, V4)
+2. No `SELECT *` — explicit field selection only (API3, V5)
+3. All user input validated against OpenAPI schema before handler executes (A03, V5, API8)
+4. All outbound HTTP requests use allowlists, block internal IPs, enforce TLS, set timeouts (A10, API7, V12.6)
+5. Rate limits exist at both per-endpoint and per-business-operation levels (API4, API6, V11)
+6. Every DB query uses parameterized statements — zero exceptions (A03, V5.3)
+7. Error responses are RFC 9457 only — never expose internals (A05, API8, V7)
+8. File operations validate paths with `filepath.Clean`, enforce size limits, set `Content-Disposition` (V12, A03)
+9. All external API data treated as untrusted input (API10, V5)
+10. Session cookies use `Secure; HttpOnly; SameSite=Strict; __Host-` prefix (V3, A07)
+
+---
+
 ## Development Standards
 
 ### Document Precedence
