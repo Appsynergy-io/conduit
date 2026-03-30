@@ -322,7 +322,7 @@ The token is a signed JWT containing:
    - Server validates signature, checks expiry, checks single-use not already consumed
    - Server generates a unique **agent identity** (UUID + HMAC-SHA256 agent key)
    - Server applies the labels from the token to the new agent record
-   - Server returns the agent ID + agent key + server fingerprint
+   - Server returns the agent ID + agent key + server fingerprint + master endpoints (QUIC + WebSocket URLs)
    - Agent stores credentials in a platform-appropriate config path (`/etc/conduit/agent.yaml` on Linux, `/Library/Application Support/Conduit/agent.yaml` on macOS, `C:\ProgramData\Conduit\agent.yaml` on Windows)
    - Agent installs itself as a system service (systemd on Linux, launchd on macOS, Windows service on Windows)
    - Agent starts and connects to server using its agent key
@@ -620,6 +620,59 @@ Every security-sensitive endpoint is tagged with `x-nist-controls` and `x-audit-
 
 Every use of a classical algorithm where PQC was available is logged with the reason.
 
+### OWASP Standards
+
+Every endpoint is tagged with `x-owasp` extensions in `openapi.yaml` mapping to the applicable OWASP risks. Three standards apply:
+
+**OWASP Top 10 (2021) — Web Application Security Risks:**
+
+| ID | Risk | Conduit CE Controls |
+|---|---|---|
+| A01 | Broken Access Control | RBAC middleware on every route. Resource ownership verified on every DB query. UUIDs for all IDs. Functional access control tests per role × endpoint. |
+| A02 | Cryptographic Failures | TLS 1.3 only. AES-256-GCM at rest. Argon2id for passwords. Ed25519 JWTs. `crypto/rand` exclusively. |
+| A03 | Injection | Parameterized SQL only. `oapi-codegen` schema validation. No `os/exec` with user input. |
+| A04 | Insecure Design | STRIDE threat modeling. `tenant_id` on every table. Business logic rate limits. |
+| A05 | Security Misconfiguration | Security headers on all responses. RFC 9457 errors. CORS allowlist. No debug in prod. |
+| A06 | Vulnerable & Outdated Components | `govulncheck` + `npm audit` in CI. SBOM per release. Approved dependencies only. |
+| A07 | Identification & Authentication Failures | WebAuthn passkeys (AAL2). Anti-brute-force. Argon2id. No user enumeration. |
+| A08 | Software & Data Integrity Failures | All assets embedded. Signed releases. JSON-only deserialization. |
+| A09 | Security Logging & Monitoring Failures | `slog` structured JSON. All auth/authz events logged. No secrets in logs. |
+| A10 | Server-Side Request Forgery | URL allowlists. Block internal IPs. HTTPS-only outbound. No redirect following. |
+
+**OWASP API Security Top 10 (2023) — API-Specific Risks:**
+
+| ID | Risk | Conduit CE Controls |
+|---|---|---|
+| API1 | Broken Object Level Authorization | Every DB read/write verifies ownership or role. UUIDs only. Table-driven BOLA tests. |
+| API2 | Broken Authentication | Passkeys primary. Stricter rate limits on auth endpoints. JWT validated per request. |
+| API3 | Broken Object Property Level Auth | Explicit SQL field selection (no `SELECT *`). Generated response DTOs. No raw body → DB binding. |
+| API4 | Unrestricted Resource Consumption | Per-user/IP rate limits. `http.MaxBytesReader`. Max page size 100. `context.WithTimeout` on all queries. |
+| API5 | Broken Function Level Authorization | Default deny. RBAC middleware before handler. Admin routes in separate group. |
+| API6 | Unrestricted Sensitive Business Flows | Per-operation rate limits. Business logic plausibility checks. |
+| API7 | Server-Side Request Forgery | Webhook URL allowlists. Agent identity by token not network. Block metadata endpoints. |
+| API8 | Security Misconfiguration | `Content-Type: application/json` enforced. RFC 9457 errors. TLS 1.3. No `Server` header. |
+| API9 | Improper Inventory Management | OpenAPI spec is single source of truth. `oapi-codegen` prevents undocumented endpoints. |
+| API10 | Unsafe Consumption of APIs | All external data validated as untrusted. TLS required outbound. Timeouts on all external calls. |
+
+**OWASP ASVS v4.0.3 — Verification Standard (Level 2 baseline, Level 3 for auth/crypto/sessions):**
+
+| Chapter | Name | Conduit CE Implementation |
+|---|---|---|
+| V1 | Architecture | Single auth mechanism (WebAuthn). Single validation layer (`oapi-codegen`). Single logging (`slog`). |
+| V2 | Authentication (L3) | 12+ char passwords, Argon2id, breach list check, FIDO2 passkeys, max 100 failed/hour. |
+| V3 | Sessions (L3) | New token on auth. 64-bit entropy. `Secure; HttpOnly; SameSite`. 12hr/30min timeouts. Re-auth for sensitive ops. |
+| V4 | Access Control | Server-side RBAC. IDOR protection. Anti-CSRF. Segregation of duties. |
+| V5 | Validation | Schema validation via `oapi-codegen`. Parameterized SQL. No `eval()`. Mass assignment protection. |
+| V6 | Cryptography (L3) | CSPRNG only. AES-256-GCM. Ed25519. No ECB/MD5/SHA-1. Constant-time comparisons. |
+| V7 | Errors & Logging | RFC 9457 with request IDs. No secrets in logs. `recover()` middleware. Structured JSON encoding. |
+| V8 | Data Protection | `Cache-Control: no-store` on sensitive endpoints. No sensitive data in URLs. Data retention policies. |
+| V9 | Communications | TLS 1.3 only. OCSP stapling. Log TLS failures. |
+| V10 | Malicious Code | `gosec` + `staticcheck` in CI. No hardcoded creds. Embedded assets. Signed releases. |
+| V11 | Business Logic | Sequential processing. Per-user rate limits. DB-level locking for race conditions. |
+| V12 | Files & Resources | Size limits. `filepath.Clean` for path traversal. Content-type by content not extension. `Content-Disposition: attachment`. |
+| V13 | API Security | No sensitive data in URLs. JSON schema validation. Content-Type enforcement. CSRF via SameSite + Origin. |
+| V14 | Configuration | No debug in prod. No version headers. Security headers (CSP, HSTS, etc.). SBOM. `govulncheck` in CI. |
+
 ### Transport
 
 | Connection | Primary | Fallback |
@@ -719,6 +772,7 @@ CREATE TABLE groups (
 
 -- Group membership (users)
 CREATE TABLE group_members (
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     group_id TEXT NOT NULL REFERENCES groups(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
@@ -727,6 +781,7 @@ CREATE TABLE group_members (
 
 -- Group membership (agents) — Agent.groupIds in API
 CREATE TABLE agent_group_members (
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     group_id TEXT NOT NULL REFERENCES groups(id),
     agent_id TEXT NOT NULL REFERENCES agents(id),
     created_at TEXT NOT NULL,
@@ -736,6 +791,7 @@ CREATE TABLE agent_group_members (
 -- WebAuthn credentials
 CREATE TABLE passkeys (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
     user_id TEXT NOT NULL REFERENCES users(id),
     credential_id BLOB NOT NULL,
     public_key BLOB NOT NULL,
@@ -972,6 +1028,9 @@ CREATE INDEX idx_webhook_subscriptions_tenant_id ON webhook_subscriptions(tenant
 CREATE INDEX idx_webhook_deliveries_tenant_id ON webhook_deliveries(tenant_id);
 CREATE INDEX idx_webhook_deliveries_subscription_id ON webhook_deliveries(subscription_id);
 CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(status);
+CREATE INDEX idx_passkeys_tenant_id ON passkeys(tenant_id);
+CREATE INDEX idx_group_members_tenant_id ON group_members(tenant_id);
+CREATE INDEX idx_agent_group_members_tenant_id ON agent_group_members(tenant_id);
 CREATE INDEX idx_sso_providers_tenant_id ON sso_providers(tenant_id);
 CREATE INDEX idx_tenant_services_tenant_id ON tenant_services(tenant_id);
 CREATE INDEX idx_bulk_exec_jobs_tenant_id ON bulk_exec_jobs(tenant_id);
