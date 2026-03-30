@@ -1426,7 +1426,7 @@ paths:
       summary: Update SSO provider
       tags: [Auth]
       x-nist-controls: [IA-2, AU-12]
-      x-owasp: [A01, A05, API5, API8]
+      x-owasp: [A01, A05, API1, API5, API8]
       x-audit-event: sso_provider.updated
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1741,6 +1741,7 @@ paths:
       summary: Get user details
       tags: [Users]
       x-nist-controls: [AC-2]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathUserId"
       responses:
@@ -2446,6 +2447,7 @@ paths:
       summary: List agent join tokens
       tags: [Agents]
       x-nist-controls: [IA-5]
+      x-owasp: [A01, API1, API5]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -3438,6 +3440,7 @@ paths:
       description: Returns first N bytes of a file for preview in the browser.
       tags: [Files]
       x-nist-controls: [AU-2]
+      x-owasp: [A01, A03, API1]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - name: path
@@ -3826,6 +3829,7 @@ paths:
       summary: List webhook subscriptions
       tags: [Webhooks]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
@@ -3992,6 +3996,7 @@ paths:
       summary: List webhook delivery attempts
       tags: [Webhooks]
       x-nist-controls: [AU-12]
+      x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
