@@ -4308,7 +4308,7 @@ paths:
         SHELL_RESIZE (0x11), SHELL_START (0x12), SHELL_EXIT (0x13),
         FILE_LIST (0x20), FILE_READ (0x21), FILE_WRITE (0x22), FILE_STAT (0x23),
         AGENT_INFO (0x30), EXEC_START (0x40), EXEC_DATA (0x41), EXEC_EXIT (0x42),
-        PING (0xF0), PONG (0xF1). See ce.md for full wire protocol specification.
+        PING (0xF0), PONG (0xF1). See CLAUDE.md for full wire protocol specification.
 
         **Transport precedence:**
         1. QUIC (UDP 443) — preferred, ~5s timeout
