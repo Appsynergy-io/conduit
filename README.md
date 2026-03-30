@@ -16,7 +16,7 @@ Full security spec: [`CLAUDE.md` — Security Standards](CLAUDE.md)
 - **Persistence**: SQLite (single tenant, `tenant_id` on all records for SaaS transferability)
 - **Transport**: QUIC primary (UDP 443), WebSocket fallback (TCP 443)
 - **Auth**: WebAuthn passkeys (AAL2 minimum), Ed25519 JWTs
-- **Agents**: Linux (systemd), macOS (launchd), Windows (service) — amd64 + arm64
+- **Agents**: Linux (systemd) amd64+arm64, macOS (launchd) arm64, Windows (service) amd64
 - **Frontend**: Next.js static export + shadcn/ui + Tailwind CSS
 - **TUI**: bubbletea (shell-only for CE)
 

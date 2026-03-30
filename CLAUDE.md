@@ -764,7 +764,7 @@ The agent must stay connected to the server at all times. Disconnection = blind 
 2. Server opens `localhost:8080` (HTTP only, localhost-only)
 3. Wizard collects: setup token, domain name, admin email, org name, first/last name
 4. Server validates setup token (constant-time comparison), proves console access (NIST IA-12)
-5. Server obtains ACME cert, writes `server.yaml`, creates tenant + admin user + seeds `remote-access` service
+5. Server obtains ACME cert, writes `server.yaml`, creates tenant + admin user (role: `platform_owner`) + seeds `remote-access` service
 6. Restarts on port 443 with TLS
 7. Admin submits setup token again + registers passkey via `/setup/passkey`
 8. **Production:** setup token DELETE'd from DB (not NULL), passkey-only auth
@@ -1095,7 +1095,7 @@ CREATE TABLE shell_recordings (
 CREATE TABLE role_assignments (
     id TEXT PRIMARY KEY,              -- UUID v4
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
-    role TEXT NOT NULL,               -- org_owner, org_admin, org_member
+    role TEXT NOT NULL,               -- org_owner, org_admin, org_member (platform_owner set on users table at setup, not assignable via API)
     user_id TEXT REFERENCES users(id),  -- NULL if assigned to group
     group_id TEXT REFERENCES groups(id), -- NULL if assigned to user
     scope TEXT,                       -- Resource scope (e.g. specific agent UUID, 'all')
