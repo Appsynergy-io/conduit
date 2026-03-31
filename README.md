@@ -125,7 +125,7 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Browser-based file manager (list, download, upload, delete, rename, mkdir, preview) | in-progress | CWP, Frontend |
+| Browser-based file manager (list, download, upload, delete, rename, mkdir, preview) | done | CWP, Frontend |
 | File transfer over HTTPS/QUIC — no SFTP dependency | done | CWP |
 | Resumable file uploads | spec-only | CWP |
 
