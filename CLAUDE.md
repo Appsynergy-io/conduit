@@ -611,7 +611,7 @@ When an operator wants to add machines, they generate a **join token** from the 
 
 | Type | Use Case | Lifetime |
 |---|---|---|
-| **Single-use** | One specific machine. Token is deleted after first successful join. | Expires after configurable TTL (default 1 hour) |
+| **Single-use** | One specific machine. Token is revoked after first successful join. | Expires after configurable TTL (default 1 hour) |
 | **Persistent** | Fleet enrollment. Same token used by many machines (e.g., cloud-init, Ansible). | Expires after configurable TTL or manual revocation |
 
 **Token structure:**
@@ -645,7 +645,7 @@ The token is a signed JWT containing:
    - Agent stores credentials in a platform-appropriate config path (`/etc/conduit/agent.yaml` on Linux, `/Library/Application Support/Conduit/agent.yaml` on macOS, `C:\ProgramData\Conduit\agent.yaml` on Windows)
    - Agent installs itself as a system service (systemd on Linux, launchd on macOS, Windows service on Windows)
    - Agent starts and connects to server using its agent key
-4. If single-use token: server deletes the token immediately after successful join
+4. If single-use token: server revokes the token immediately after successful join (sets `revoked = 1`, `revoked_at = now`)
 5. If persistent token: token remains valid for more machines until TTL or revocation
 
 #### Agent Identity (Post-Join)
@@ -936,6 +936,7 @@ CREATE TABLE services (
 );
 
 -- Tenant ↔ Service junction (which services a tenant has access to)
+-- API Service response includes `enabledAt` — handler joins services + tenant_services
 CREATE TABLE tenant_services (
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
     service_id TEXT NOT NULL REFERENCES services(id),
