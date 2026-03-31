@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -29,10 +30,11 @@ type Server struct {
 	eventBus      *EventBus
 	agentRegistry *AgentRegistry
 	webhooks      *WebhookDeliverer
+	frontendFS    fs.FS
 }
 
 // New creates a Server with all dependencies wired.
-func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig *tls.Config, logger *slog.Logger) *Server {
+func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig *tls.Config, logger *slog.Logger, frontendFS fs.FS) *Server {
 	s := &Server{
 		cfg:       cfg,
 		db:        database,
@@ -42,6 +44,7 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 		eventBus:      NewEventBus(logger),
 		agentRegistry: NewAgentRegistry(logger),
 		webhooks:      NewWebhookDeliverer(database, logger),
+		frontendFS:    frontendFS,
 	}
 	s.router = s.buildRouter()
 	return s
@@ -147,6 +150,11 @@ func (s *Server) buildRouter() chi.Router {
 			})
 		})
 	})
+
+	// Frontend catch-all (serves static Next.js export for non-API routes)
+	if s.frontendFS != nil {
+		r.Handle("/*", newFrontendHandler(s.frontendFS))
+	}
 
 	return r
 }

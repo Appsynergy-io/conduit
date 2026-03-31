@@ -35,7 +35,7 @@ func newTestServerWithDB(t *testing.T, mode string) (*server.Server, *auth.JWTMa
 		Server: shared.ServerConfig{Mode: mode, HTTPAddr: ":0"},
 	}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := server.New(cfg, database, jwtMgr, nil, logger)
+	srv := server.New(cfg, database, jwtMgr, nil, logger, nil)
 	return srv, jwtMgr, database
 }
 
