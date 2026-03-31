@@ -65,9 +65,16 @@ func (s *Server) buildRouter() chi.Router {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.RequireJSON)
 
+		// Setup wizard (public, no auth — only works before setup is complete)
+		r.Group(func(r chi.Router) {
+			r.Get("/setup/status", s.handleSetupStatus)
+			r.Post("/setup/configure", s.handleSetupConfigure)
+			r.Post("/setup/passkey", s.handleSetupPasskey)
+		})
+
 		// Public auth endpoints (no JWT required)
 		r.Group(func(r chi.Router) {
-			r.Post("/auth/password/login", s.handleNotImplemented)
+			r.Post("/auth/password/login", s.handlePasswordLogin)
 			r.Post("/auth/webauthn/login/begin", s.handleNotImplemented)
 			r.Post("/auth/webauthn/login/finish", s.handleNotImplemented)
 		})
