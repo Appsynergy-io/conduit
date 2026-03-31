@@ -116,7 +116,7 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Shell sessions in browser (xterm.js, full feature parity) | spec-only | CWP, Frontend |
+| Shell sessions in browser (xterm.js, full feature parity) | in-progress | CWP, Frontend |
 | PTY shell execution on agent (Linux, macOS via creack/pty) | done | Agent |
 | Multiple concurrent shell sessions per agent (multiplexed via CWP) | done | CWP |
 | Terminal session recording + playback (asciicast v2) | spec-only | Shell, DB |
@@ -153,7 +153,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
 | Audit logging for all access events | done | DB |
-| Audit log viewer in dashboard (search, filter, query) | spec-only | Frontend, DB |
+| Audit log viewer in dashboard (search, filter, query) | done | Frontend, DB |
 | Webhooks on audit events (HMAC-SHA256 signed, HTTPS-only in prod) | done | DB |
 | Webhook subscription management (create, update, delete, test) | done | DB |
 | Webhook delivery history with retry tracking | done | DB |
@@ -166,8 +166,8 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| WebSocket EventBus for live updates — no polling | spec-only | HTTP server |
-| Agent connect/disconnect events push to all browsers | spec-only | EventBus |
+| WebSocket EventBus for live updates — no polling | done | HTTP server |
+| Agent connect/disconnect events push to all browsers | done | EventBus |
 | Shell session start/stop events | spec-only | EventBus, Shell |
 | File operation events | spec-only | EventBus, Files |
 | Auth events (login, logout, session revocation) | spec-only | EventBus, Auth |
@@ -178,8 +178,8 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Public marketing landing page served from same binary | spec-only | Frontend |
-| Fortune 500-quality UI/UX | spec-only | Frontend |
+| Public marketing landing page served from same binary | done | Frontend |
+| Fortune 500-quality UI/UX | in-progress | Frontend |
 | SEO optimized for remote access, infrastructure access keywords | spec-only | Frontend |
 | Pre-generated OG images (build-time, static assets in `public/og/`) | spec-only | Frontend |
 | Core Web Vitals targets met (LCP <=2.5s, INP <=200ms, CLS <=0.1) | spec-only | Frontend |

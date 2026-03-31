@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	conduit "github.com/appsynergy-io/conduit"
 	"github.com/appsynergy-io/conduit/internal/auth"
 	"github.com/appsynergy-io/conduit/internal/db"
 	"github.com/appsynergy-io/conduit/internal/server"
@@ -102,7 +103,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Create and start server
-	srv := server.New(cfg, database, jwtMgr, tlsCfg, logger)
+	srv := server.New(cfg, database, jwtMgr, tlsCfg, logger, conduit.FrontendFS)
 	if err := srv.Start(ctx); err != nil {
 		return fmt.Errorf("starting server: %w", err)
 	}
