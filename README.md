@@ -68,13 +68,13 @@ Status: `spec-only` | `in-progress` | `done`
 | HTTP/3 serving for browsers + HTTP/2 fallback | spec-only | — |
 | ACME TLS auto-provisioning (Let's Encrypt) | spec-only | — |
 | X25519MLKEM768 hybrid PQC TLS on all connections | spec-only | — |
-| SQLite database (pure Go, `modernc.org/sqlite`) with AES-256-GCM on sensitive fields | spec-only | — |
-| Embedded static frontend via `embed.FS` | spec-only | Frontend |
+| SQLite database (pure Go, `modernc.org/sqlite`) with AES-256-GCM on sensitive fields | done | — |
+| Embedded static frontend via `embed.FS` | done | Frontend |
 | First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey) | spec-only | Auth, DB |
 | WebSocket EventBus for real-time dashboard updates | spec-only | HTTP server |
-| `server.yaml` configuration file | spec-only | — |
-| Input validation middleware — unknown JSON fields rejected | spec-only | Router |
-| Parameterized queries only — no raw SQL interpolation | spec-only | DB |
+| `server.yaml` configuration file | done | — |
+| Input validation middleware — unknown JSON fields rejected | done | Router |
+| Parameterized queries only — no raw SQL interpolation | done | DB |
 
 ### Auth & Identity
 
@@ -82,8 +82,8 @@ Status: `spec-only` | `in-progress` | `done`
 |---------|--------|--------------|
 | WebAuthn passkey registration + login (sole production auth) | spec-only | DB, Users |
 | Dev-mode password fallback (Argon2id hashed) | spec-only | DB, Users |
-| JWT issuance and validation (Ed25519 signed, short-lived) | spec-only | — |
-| Users + groups + RBAC (platform_owner, org_owner, org_admin, org_member) | spec-only | DB |
+| JWT issuance and validation (Ed25519 signed, short-lived) | done | — |
+| Users + groups + RBAC (platform_owner, org_owner, org_admin, org_member) | done | DB |
 | Account recovery via one-time recovery codes (Argon2id hashed, single-use) | spec-only | Auth, Users, Passkeys |
 | Admin-assisted account recovery (reset user auth state) | spec-only | Auth, Users, RBAC |
 | SAML/OIDC SSO (passkeys remain primary) | spec-only | Auth, Users |
