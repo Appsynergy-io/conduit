@@ -223,7 +223,7 @@ Target **Level 2** for all chapters, **Level 3** for V2 (Auth), V3 (Sessions), V
 | **V10** | Malicious Code | `gosec` + `staticcheck` in CI. No hardcoded creds. All assets embedded. Signed releases. |
 | **V11** | Business Logic | Sequential processing (no step skipping). Per-user rate limits. TOCTOU race condition protection (`sync.Mutex` or DB locking). Unusual activity monitoring. |
 | **V12** | Files & Resources | Max file size limits. Content-type validation by content (not extension). Path traversal prevention (`filepath.Clean`). Store outside web root. `Content-Disposition: attachment` for downloads. |
-| **V13** | API & Web Service | No sensitive data in URLs. Authorization at URI and resource level. Reject unexpected content types (406/415). JSON schema validation. CSRF via SameSite + Origin validation. |
+| **V13** | API & Web Service | No sensitive data in URLs (exception: OIDC callback per RFC 6749 §4.1.2 — auth code is single-use, short-lived). Authorization at URI and resource level. Reject unexpected content types (406/415). JSON schema validation. CSRF via SameSite + Origin validation. |
 | **V14** | Configuration | Debug disabled in prod. No version info in headers. Content-Type with charset. CSP, HSTS, X-Content-Type-Options, Referrer-Policy. CORS allowlist. `govulncheck` + `npm audit` in CI. SBOM maintained. |
 
 ### NIST Enforcement Rules
@@ -258,11 +258,13 @@ When writing ANY code:
 
 ```
 Content-Security-Policy: [restrict script/style/frame sources]
-Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 Referrer-Policy: strict-origin-when-cross-origin
-Permissions-Policy: [restrict browser features]
+Permissions-Policy: camera=(), microphone=(), geolocation=()
+X-Request-Id: <uuid> (request correlation, NIST AU-3)
+Cache-Control: no-store (on sensitive responses — auth, user, session, audit)
 ```
 
 ---
@@ -315,6 +317,16 @@ Permissions-Policy: [restrict browser features]
 - Test files live next to source: `foo.go` → `foo_test.go`
 - No mocks for SQLite — use real in-memory databases
 - Security-critical behavior (auth, tenant isolation, input validation) must have test coverage
+
+### Pre-Commit Testing Requirement (MANDATORY)
+Every endpoint or handler must have passing unit tests BEFORE committing. No exceptions.
+- **Every HTTP handler:** At least one table-driven test per handler covering success path, auth failure, validation rejection, and not-found. Use `httptest.NewServer` + real in-memory SQLite.
+- **Every DB method:** At least one test per CRUD operation verifying correct SQL behavior with real SQLite (`:memory:`).
+- **Every middleware:** Test that it rejects unauthorized/invalid requests and passes valid ones.
+- **Every frontend component that calls an API:** At least one test verifying render + basic interaction.
+- **Run tests before committing:** `go test ./...` must pass for Go. `pnpm test` must pass for frontend. Do not commit code with failing or missing tests.
+- **No skipping:** Do not use `t.Skip()`, `xit`, or `describe.skip` to bypass failing tests. Fix the code or fix the test.
+- Tests are not optional polish — they are a gate. Untested endpoints do not ship.
 
 ### Linting & Formatting
 - **Go:** `golangci-lint` with project `.golangci.yml` — includes `gofumpt`, `govet`, `errcheck`, `staticcheck`, `gosec`, `bodyclose`, `sqlclosecheck`, `exhaustive`, `noctx`, `unparam`, `wastedassign`, `errorlint`, `tenv`

@@ -69,6 +69,28 @@ info:
 
     Dashboard state updates in real-time via the WebSocket EventBus at `/api/v1/events/stream`.
     No polling. No manual refresh.
+
+    ## Security Headers (Middleware-Applied)
+
+    All responses — success and error — include these headers via middleware:
+    - `X-Request-Id` — Request correlation ID (NIST AU-3)
+    - `X-Content-Type-Options: nosniff` — MIME type sniffing prevention (NIST SC-18)
+    - `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` — HSTS (NIST SC-8)
+    - `Cache-Control: no-store` — On sensitive responses (auth, user data, sessions, audit)
+    - `X-Frame-Options: DENY` — Clickjacking prevention
+    - `Referrer-Policy: strict-origin-when-cross-origin`
+    - `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+    - `Content-Security-Policy` — Restrictive CSP on HTML responses
+
+    These are enforced at the middleware layer and not repeated on every endpoint definition.
+    Error responses reference shared components that document the critical subset.
+
+    ## Content-Type Enforcement
+
+    All POST/PATCH/PUT endpoints require `Content-Type: application/json` (except
+    file upload which uses `application/octet-stream` and deploy which uses `multipart/form-data`).
+    Requests with unexpected content types are rejected with `415 Unsupported Media Type`.
+    Unknown JSON fields are rejected on all endpoints (`additionalProperties: false`).
   contact:
     name: AppSynergy
     url: https://appsynergy.io
@@ -135,6 +157,9 @@ info:
           - id: IA-2
             title: Identification and Authentication
             implementation: WebAuthn passkeys for users, HMAC-SHA256 tokens for agents
+          - id: IA-4
+            title: Identifier Management
+            implementation: UUID v4 for all identifiers (users, agents, tenants, tokens), generated via CSPRNG
           - id: IA-5
             title: Authenticator Management
             implementation: Hardware/platform-bound passkeys, per-agent HMAC tokens
@@ -153,6 +178,9 @@ info:
           - id: SC-13
             title: Cryptographic Protection
             implementation: All algorithms NIST-approved, FIPS 203/204/205 compliant
+          - id: SC-18
+            title: Mobile Code
+            implementation: All assets embedded (embed.FS), zero CDN. CSP and X-Content-Type-Options headers prevent MIME sniffing
           - id: SC-23
             title: Session Authenticity
             implementation: JWTs signed with Ed25519, sessions bound to authenticated identities
@@ -171,6 +199,9 @@ info:
           - id: SI-10
             title: Information Input Validation
             implementation: Unknown JSON fields rejected, parameterized SQL only
+          - id: SI-12
+            title: Information Management and Retention
+            implementation: Audit logs append-only, webhook events include minimal PII per data minimization, user deletion events carry only userId
       - id: NIST-SP-800-63B
         name: NIST SP 800-63B
         description: Digital Identity Guidelines — Authentication and Lifecycle Management
@@ -217,6 +248,8 @@ servers:
         description: The domain name configured during setup wizard
   - url: http://localhost:8080
     description: Setup wizard (first-run only, localhost, no TLS)
+  - url: https://localhost:8443/api/v1
+    description: Dev mode (self-signed TLS, --dev flag or server.mode dev)
 
 tags:
   # ── Platform tags (no service scope — shared across all services) ──
@@ -325,6 +358,9 @@ paths:
         Used by load balancers, monitoring, and agent connectivity checks.
       tags: [Health]
       security: []
+      x-nist-controls: [SI-4]
+      x-owasp: [A05, API8]
+      x-rate-limit: { window: 1m, limit: 60 }
       responses:
         "200":
           description: Server is healthy
@@ -405,6 +441,9 @@ paths:
         **NIST IA-12:** Identity proofing via physical localhost access.
       tags: [Setup Wizard]
       security: []
+      x-nist-controls: [IA-12]
+      x-owasp: [A05, API8]
+      x-rate-limit: { window: 1m, limit: 30 }
       responses:
         "200":
           description: Setup wizard is available (first run)
@@ -459,6 +498,7 @@ paths:
       x-nist-controls: [IA-4, IA-12, CM-2, IA-5]
       x-owasp: [A01, A03, A05, API5, API8]
       x-audit-event: setup.configured
+      x-rate-limit: { window: 1m, limit: 5 }
       requestBody:
         required: true
         content:
@@ -481,11 +521,13 @@ paths:
                 domain:
                   type: string
                   format: hostname
+                  maxLength: 253
                   description: Public domain name for the Conduit server
                   example: "conduit.example.com"
                 adminEmail:
                   type: string
                   format: email
+                  maxLength: 254
                   description: Email for the platform owner account
                   example: "admin@example.com"
                 organizationName:
@@ -578,6 +620,7 @@ paths:
       x-nist-controls: [IA-2, IA-12]
       x-owasp: [A01, A02, A07, API2, API5]
       x-audit-event: setup.passkey.registered
+      x-rate-limit: { window: 1m, limit: 5 }
       requestBody:
         required: true
         content:
@@ -588,6 +631,8 @@ paths:
               properties:
                 setupToken:
                   type: string
+                  minLength: 43
+                  maxLength: 43
                   writeOnly: true
                   description: |
                     Same server-generated setup token used in `/setup/configure`.
@@ -646,6 +691,7 @@ paths:
       tags: [Auth]
       x-nist-controls: [IA-2, IA-5]
       x-owasp: [A07, API2]
+      x-audit-event: passkey.registration.started
       responses:
         "200":
           description: Registration challenge issued
@@ -735,6 +781,8 @@ paths:
       security: []
       x-nist-controls: [IA-2, AC-7]
       x-owasp: [A07, API2]
+      x-rate-limit: { window: 1m, limit: 10 }
+      x-audit-event: auth.login.webauthn.started
       requestBody:
         required: true
         content:
@@ -745,6 +793,7 @@ paths:
                 email:
                   type: string
                   format: email
+                  maxLength: 254
                   description: Optional — for discoverable credential hints
               additionalProperties: false
       responses:
@@ -780,6 +829,7 @@ paths:
       security: []
       x-nist-controls: [IA-2, AC-7, AC-12, SC-23, AU-12]
       x-owasp: [A07, A02, API2]
+      x-rate-limit: { window: 1m, limit: 10 }
       x-audit-event: auth.login.webauthn
       requestBody:
         required: true
@@ -797,7 +847,9 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          description: Authentication failed
+          description: |
+            Authentication failed. Returns identical error regardless of
+            failure reason — no user enumeration (NIST AC-7, OWASP A07).
           content:
             application/problem+json:
               schema:
@@ -855,6 +907,7 @@ paths:
           schema:
             type: string
             format: base64url
+            maxLength: 1024
       responses:
         "204":
           description: Passkey deleted
@@ -898,6 +951,7 @@ paths:
       security: []
       x-nist-controls: [AC-7, AU-12]
       x-owasp: [A07, A02, A03, API2]
+      x-rate-limit: { window: 1m, limit: 5 }
       x-audit-event: auth.login.password
       requestBody:
         required: true
@@ -910,9 +964,11 @@ paths:
                 email:
                   type: string
                   format: email
+                  maxLength: 254
                 password:
                   type: string
                   format: password
+                  maxLength: 128
                   writeOnly: true
               additionalProperties: false
       responses:
@@ -929,7 +985,9 @@ paths:
                         type: boolean
                         description: If true, client MUST redirect to passkey registration
         "401":
-          description: Invalid credentials
+          description: |
+            Invalid credentials. Returns identical error for invalid email
+            or wrong password — no user enumeration (NIST AC-7, OWASP A07).
           content:
             application/problem+json:
               schema:
@@ -957,6 +1015,7 @@ paths:
       security: []
       x-nist-controls: [SC-23, AC-12]
       x-owasp: [A07, A02, API2]
+      x-rate-limit: { window: 1m, limit: 30 }
       x-audit-event: auth.token.refreshed
       requestBody:
         required: true
@@ -968,6 +1027,7 @@ paths:
               properties:
                 refreshToken:
                   type: string
+                  maxLength: 4096
                   writeOnly: true
               additionalProperties: false
       responses:
@@ -1009,6 +1069,7 @@ paths:
               properties:
                 token:
                   type: string
+                  maxLength: 4096
                   writeOnly: true
                 tokenType:
                   type: string
@@ -1046,6 +1107,7 @@ paths:
       security: []
       x-nist-controls: [IA-2]
       x-owasp: [A07, API2, API4]
+      x-rate-limit: { window: 1m, limit: 10 }
       x-audit-event: auth.device.flow_started
       requestBody:
         required: true
@@ -1057,9 +1119,11 @@ paths:
               properties:
                 clientId:
                   type: string
+                  maxLength: 255
                   description: CLI client identifier
                 profileName:
                   type: string
+                  maxLength: 255
                   description: CLI profile name for credential storage
                   example: "production"
               additionalProperties: false
@@ -1109,6 +1173,7 @@ paths:
       security: []
       x-nist-controls: [IA-2]
       x-owasp: [A07, API2, API4]
+      x-rate-limit: { window: 1m, limit: 20 }
       x-audit-event: auth.device.token_issued
       requestBody:
         required: true
@@ -1120,6 +1185,7 @@ paths:
               properties:
                 deviceCode:
                   type: string
+                  maxLength: 255
                   writeOnly: true
               additionalProperties: false
       responses:
@@ -1159,6 +1225,7 @@ paths:
       tags: [Auth]
       x-nist-controls: [IA-2, AU-12]
       x-owasp: [A01, A07, API2, API5]
+      x-rate-limit: { window: 1m, limit: 10 }
       x-audit-event: auth.device.authorized
       requestBody:
         required: true
@@ -1170,6 +1237,7 @@ paths:
               properties:
                 userCode:
                   type: string
+                  maxLength: 20
                   description: The code displayed by the CLI
               additionalProperties: false
       responses:
@@ -1183,6 +1251,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: Invalid or expired user code
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   # ════════════════════════════════════════════════════════════════
   # AUTH — CI / Machine Tokens
@@ -1233,6 +1303,7 @@ paths:
       tags: [Auth]
       x-nist-controls: [IA-5, SC-28, AU-12]
       x-owasp: [A01, A02, API2, API5]
+      x-rate-limit: { window: 1m, limit: 10 }
       x-audit-event: ci_token.created
       requestBody:
         required: true
@@ -1265,12 +1336,14 @@ paths:
                       - config:read
                       - config:write
                   minItems: 1
+                  maxItems: 20
                   description: Permissions granted to this token
                 expiresAt:
                   type:
                     - string
                     - "null"
                   format: date-time
+                  maxLength: 35
                   description: Expiration timestamp. Null for non-expiring (not recommended).
               additionalProperties: false
       responses:
@@ -1310,6 +1383,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/ci-tokens/{tokenId}:
     delete:
@@ -1478,6 +1553,7 @@ paths:
       security: []
       x-nist-controls: [IA-2]
       x-owasp: [A07, A02, API2, API10]
+      x-rate-limit: { window: 1m, limit: 10 }
       x-audit-event: auth.login.saml
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1491,8 +1567,11 @@ paths:
               properties:
                 SAMLResponse:
                   type: string
+                  maxLength: 1048576
                 RelayState:
                   type: string
+                  maxLength: 4096
+              additionalProperties: false
       responses:
         "302":
           description: Redirect to dashboard with session token
@@ -1509,10 +1588,16 @@ paths:
     get:
       operationId: oidcCallback
       summary: OIDC authorization code callback
+      description: |
+        Standard OAuth2/OIDC authorization code callback. Uses GET with query
+        parameters per RFC 6749 §4.1.2. The authorization code in the query string
+        is a documented exception to the "no sensitive data in URLs" rule — this is
+        required by the OIDC specification and the code is single-use with short expiry.
       tags: [Auth]
       security: []
       x-nist-controls: [IA-2]
       x-owasp: [A07, A02, API2, API10]
+      x-rate-limit: { window: 1m, limit: 10 }
       x-audit-event: auth.login.oidc
       parameters:
         - $ref: "#/components/parameters/PathProviderId"
@@ -1521,11 +1606,13 @@ paths:
           required: true
           schema:
             type: string
+            maxLength: 2048
         - name: state
           in: query
           required: true
           schema:
             type: string
+            maxLength: 2048
       responses:
         "302":
           description: Redirect to dashboard with session token
@@ -1681,6 +1768,7 @@ paths:
           description: Search by email, first name, or last name
           schema:
             type: string
+            maxLength: 500
       responses:
         "200":
           description: Paginated list of users
@@ -1899,6 +1987,7 @@ paths:
           in: query
           schema:
             type: string
+            maxLength: 500
       responses:
         "200":
           description: Paginated list of groups
@@ -2161,6 +2250,7 @@ paths:
           in: query
           schema:
             type: string
+            maxLength: 50
         - $ref: "#/components/parameters/CursorParam"
         - $ref: "#/components/parameters/LimitParam"
       responses:
@@ -2316,12 +2406,14 @@ paths:
             Multiple labels are AND'd.
           schema:
             type: string
+            maxLength: 500
           example: "env:production"
         - name: search
           in: query
           description: Search by hostname, IP, or label
           schema:
             type: string
+            maxLength: 500
       responses:
         "200":
           description: Paginated list of agents
@@ -2391,6 +2483,8 @@ paths:
                   type: object
                   additionalProperties:
                     type: string
+                    maxLength: 255
+                  maxProperties: 50
                   description: Key-value labels for targeting
                   example:
                     env: production
@@ -2401,6 +2495,7 @@ paths:
                   items:
                     type: string
                     format: uuid
+                  maxItems: 100
               additionalProperties: false
       responses:
         "200":
@@ -2503,15 +2598,20 @@ paths:
                     - string
                     - "null"
                   format: date-time
+                  maxLength: 35
                 labels:
                   type: object
                   additionalProperties:
                     type: string
+                    maxLength: 255
+                  maxProperties: 50
                   description: Labels automatically applied to agents that register with this token
                 maxUses:
                   type:
                     - integer
                     - "null"
+                  minimum: 1
+                  maximum: 100000
                   description: Maximum number of uses (null for unlimited, persistent tokens only)
               additionalProperties: false
       responses:
@@ -2568,6 +2668,7 @@ paths:
       security: []
       x-nist-controls: [IA-2, IA-5]
       x-owasp: [A02, A07, API2]
+      x-rate-limit: { window: 1m, limit: 10 }
       x-audit-event: agent.registered
       requestBody:
         required: true
@@ -2579,10 +2680,12 @@ paths:
               properties:
                 joinToken:
                   type: string
+                  maxLength: 4096
                   writeOnly: true
                   description: Single-use or persistent join token
                 hostname:
                   type: string
+                  maxLength: 253
                 os:
                   type: string
                   enum: [linux, windows, darwin]
@@ -2596,6 +2699,7 @@ paths:
                     Other combinations are accepted but no official binaries are provided.
                 version:
                   type: string
+                  maxLength: 50
                   description: Agent binary version
               additionalProperties: false
       responses:
@@ -2669,6 +2773,7 @@ paths:
           description: Comma-separated list of metrics to return
           schema:
             type: string
+            maxLength: 500
             default: "cpu,memory,disk,network"
       responses:
         "200":
@@ -2710,6 +2815,7 @@ paths:
               properties:
                 targetVersion:
                   type: string
+                  maxLength: 50
                   description: Version to update to. If omitted, updates to latest.
                 force:
                   type: boolean
@@ -2765,6 +2871,8 @@ paths:
               properties:
                 delay:
                   type: integer
+                  minimum: 0
+                  maximum: 86400
                   description: Delay in seconds before reboot
                   default: 0
                 reason:
@@ -2803,6 +2911,8 @@ paths:
               properties:
                 delay:
                   type: integer
+                  minimum: 0
+                  maximum: 86400
                   default: 0
                 reason:
                   type: string
@@ -2923,13 +3033,18 @@ paths:
                 cols:
                   type: integer
                   default: 80
+                  minimum: 1
+                  maximum: 10000
                   description: Terminal width in columns
                 rows:
                   type: integer
                   default: 24
+                  minimum: 1
+                  maximum: 10000
                   description: Terminal height in rows
                 shell:
                   type: string
+                  maxLength: 4096
                   description: Shell to launch (e.g., /bin/bash, cmd.exe). Defaults to OS default.
                 recording:
                   type: boolean
@@ -3030,9 +3145,11 @@ paths:
                 cols:
                   type: integer
                   minimum: 1
+                  maximum: 10000
                 rows:
                   type: integer
                   minimum: 1
+                  maximum: 10000
               additionalProperties: false
       responses:
         "200":
@@ -3169,7 +3286,11 @@ paths:
           required: true
           schema:
             type: string
-          description: Absolute path on the agent filesystem
+            maxLength: 4096
+            pattern: "^/"
+          description: |
+            Absolute path on the agent filesystem.
+            Path traversal prevented server-side via filepath.Clean (OWASP A03, V12).
           example: "/var/log"
         - name: showHidden
           in: query
@@ -3218,7 +3339,11 @@ paths:
           required: true
           schema:
             type: string
-          description: Absolute path of the file on the agent
+            maxLength: 4096
+            pattern: "^/"
+          description: |
+            Absolute path of the file on the agent.
+            Path traversal prevented server-side via filepath.Clean (OWASP A03, V12).
       responses:
         "200":
           description: File content
@@ -3264,7 +3389,11 @@ paths:
           required: true
           schema:
             type: string
-          description: Target path on the agent filesystem
+            maxLength: 4096
+            pattern: "^/"
+          description: |
+            Target path on the agent filesystem.
+            Path traversal prevented server-side via filepath.Clean (OWASP A03, V12).
         - name: X-Upload-Id
           in: header
           schema:
@@ -3275,6 +3404,7 @@ paths:
           in: header
           schema:
             type: string
+            maxLength: 128
           description: Byte range for resumable uploads (e.g., "bytes 0-1048575/10485760")
       requestBody:
         required: true
@@ -3324,7 +3454,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "413":
-          description: File too large
+          description: "File exceeds maximum upload size (default 2GB, configurable)"
 
   /agents/{agentId}/files/delete:
     post:
@@ -3346,6 +3476,8 @@ paths:
               properties:
                 path:
                   type: string
+                  maxLength: 4096
+                  pattern: "^/"
                 recursive:
                   type: boolean
                   default: false
@@ -3381,8 +3513,12 @@ paths:
               properties:
                 oldPath:
                   type: string
+                  maxLength: 4096
+                  pattern: "^/"
                 newPath:
                   type: string
+                  maxLength: 4096
+                  pattern: "^/"
               additionalProperties: false
       responses:
         "200":
@@ -3416,6 +3552,8 @@ paths:
               properties:
                 path:
                   type: string
+                  maxLength: 4096
+                  pattern: "^/"
                 parents:
                   type: boolean
                   default: true
@@ -3448,10 +3586,13 @@ paths:
           required: true
           schema:
             type: string
+            maxLength: 4096
+            pattern: "^/"
         - name: maxBytes
           in: query
           schema:
             type: integer
+            minimum: 1
             default: 65536
             maximum: 1048576
       responses:
@@ -3513,20 +3654,26 @@ paths:
               properties:
                 command:
                   type: string
+                  maxLength: 65536
                   description: Command to execute
                   example: "uptime"
                 targets:
                   $ref: "#/components/schemas/BulkTargets"
                 timeout:
                   type: integer
+                  minimum: 1
+                  maximum: 86400
                   description: Per-agent timeout in seconds
                   default: 300
                 maxConcurrency:
                   type: integer
+                  minimum: 1
+                  maximum: 1000
                   description: Maximum parallel executions
                   default: 50
                 shell:
                   type: string
+                  maxLength: 4096
                   description: Shell to use (e.g., /bin/bash, cmd.exe)
               additionalProperties: false
       responses:
@@ -3636,17 +3783,24 @@ paths:
                   format: binary
                 targets:
                   type: string
+                  maxLength: 65536
                   description: JSON-encoded BulkTargets
                 destinationPath:
                   type: string
+                  maxLength: 4096
+                  pattern: "^/"
                   description: Target path on agents
                 postDeployCommand:
                   type: string
+                  maxLength: 65536
                   description: Command to run after deployment
                 mode:
                   type: string
+                  maxLength: 4
+                  pattern: "^[0-7]{3,4}$"
                   description: File permissions (e.g., "0755")
                   default: "0644"
+              additionalProperties: false
       responses:
         "202":
           description: Deployment started
@@ -3688,6 +3842,7 @@ paths:
           in: query
           schema:
             type: string
+            maxLength: 100
           description: Filter by event type (e.g., "auth.login", "shell.session")
         - name: userId
           in: query
@@ -3703,16 +3858,19 @@ paths:
           in: query
           schema:
             type: string
+            maxLength: 45
         - name: from
           in: query
           schema:
             type: string
             format: date-time
+            maxLength: 35
         - name: to
           in: query
           schema:
             type: string
             format: date-time
+            maxLength: 35
         - name: outcome
           in: query
           schema:
@@ -3724,6 +3882,7 @@ paths:
           description: Full-text search across audit event details
           schema:
             type: string
+            maxLength: 500
       responses:
         "200":
           description: Paginated audit events
@@ -3794,13 +3953,17 @@ paths:
                 from:
                   type: string
                   format: date-time
+                  maxLength: 35
                 to:
                   type: string
                   format: date-time
+                  maxLength: 35
                 eventTypes:
                   type: array
                   items:
                     type: string
+                    maxLength: 100
+                  maxItems: 50
               additionalProperties: false
       responses:
         "200":
@@ -3857,7 +4020,8 @@ paths:
       description: |
         Registers an endpoint to receive audit event webhooks.
         Payloads are signed with HMAC-SHA256.
-        At-least-once delivery with exponential backoff retries.
+        At-least-once delivery with exponential backoff retries (max 10 attempts,
+        backoff: min(2^attempt, 3600) seconds with jitter).
 
         **URL validation:** Production requires HTTPS with valid TLS cert.
         Dev mode permits `http://localhost` / `http://127.0.0.1` (loopback)
@@ -4073,6 +4237,7 @@ paths:
           description: Comma-separated list of channels to subscribe on connect
           schema:
             type: string
+            maxLength: 500
           example: "agents,shell,files"
       responses:
         "101":
@@ -4205,6 +4370,8 @@ paths:
           required: true
           schema:
             type: string
+            maxLength: 100
+            pattern: "^[a-z0-9][a-z0-9-]*$"
           description: "Service slug (e.g. `remote-access`)"
           example: "remote-access"
       responses:
@@ -4302,7 +4469,9 @@ paths:
         Agent presents token via `Authorization: Bearer <token>` header during upgrade.
 
         For QUIC, agents connect to `quic://[domain]:443` and present identity
-        in the CWP HELLO frame, then authenticate via a separate AUTH frame.
+        (hostname, OS, arch, agent-id) in the CWP HELLO frame, then authenticate
+        via a separate AUTH frame containing an HMAC-SHA256 signature of the
+        HELLO payload using the agent key.
 
         **CWP Frame Types:** HELLO (0x01), AUTH (0x02), SHELL_DATA (0x10),
         SHELL_RESIZE (0x11), SHELL_START (0x12), SHELL_EXIT (0x13),
@@ -4364,6 +4533,8 @@ webhooks:
         Fired when an agent establishes a connection to the master.
         Signed with HMAC-SHA256. At-least-once delivery.
       tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12]
+      x-owasp: [A09, API1]
       parameters:
         - $ref: "#/components/parameters/WebhookEventId"
         - $ref: "#/components/parameters/WebhookTimestamp"
@@ -4402,6 +4573,8 @@ webhooks:
       operationId: onAgentDisconnected
       summary: Agent disconnected event
       tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12]
+      x-owasp: [A09, API1]
       parameters:
         - $ref: "#/components/parameters/WebhookEventId"
         - $ref: "#/components/parameters/WebhookTimestamp"
@@ -4435,6 +4608,8 @@ webhooks:
       operationId: onAuthLogin
       summary: User login event
       tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12, AC-7]
+      x-owasp: [A07, A09, API1]
       parameters:
         - $ref: "#/components/parameters/WebhookEventId"
         - $ref: "#/components/parameters/WebhookTimestamp"
@@ -4474,6 +4649,8 @@ webhooks:
       operationId: onShellSessionStarted
       summary: Shell session started
       tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12]
+      x-owasp: [A09, API1]
       parameters:
         - $ref: "#/components/parameters/WebhookEventId"
         - $ref: "#/components/parameters/WebhookTimestamp"
@@ -4511,6 +4688,8 @@ webhooks:
       operationId: onUserCreated
       summary: User created event
       tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12, AC-2]
+      x-owasp: [A09, API1]
       parameters:
         - $ref: "#/components/parameters/WebhookEventId"
         - $ref: "#/components/parameters/WebhookTimestamp"
@@ -4547,6 +4726,8 @@ webhooks:
       operationId: onUserDeleted
       summary: User deleted event (minimal data per NIST SI-12)
       tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12, AC-2, SI-12]
+      x-owasp: [A09, API1]
       parameters:
         - $ref: "#/components/parameters/WebhookEventId"
         - $ref: "#/components/parameters/WebhookTimestamp"
@@ -4580,6 +4761,8 @@ webhooks:
       summary: Generic audit event webhook
       description: Fired for all audit events if subscribed to `audit.*`.
       tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-6, AU-9, AU-12]
+      x-owasp: [A09, API1]
       parameters:
         - $ref: "#/components/parameters/WebhookEventId"
         - $ref: "#/components/parameters/WebhookTimestamp"
@@ -4665,6 +4848,7 @@ components:
       description: Opaque pagination cursor from a previous response
       schema:
         type: string
+        maxLength: 4096
 
     LimitParam:
       name: limit
@@ -4682,6 +4866,7 @@ components:
       description: "Sort expression. Format: `field:direction` (e.g., `createdAt:desc`)"
       schema:
         type: string
+        maxLength: 100
         pattern: "^[a-zA-Z]+:(asc|desc)$"
         default: "createdAt:desc"
 
@@ -4766,6 +4951,7 @@ components:
       required: true
       schema:
         type: string
+        maxLength: 71
       description: "HMAC-SHA256 signature: `sha256=<hex-digest>` over raw request body"
 
   # ──────────────────────────────────────────────────────────────
@@ -5101,9 +5287,11 @@ components:
         id:
           type: string
           format: base64url
+          maxLength: 1024
         rawId:
           type: string
           format: base64url
+          maxLength: 1024
         type:
           type: string
           const: public-key
@@ -5115,9 +5303,11 @@ components:
             clientDataJSON:
               type: string
               format: base64url
+              maxLength: 65536
             attestationObject:
               type: string
               format: base64url
+              maxLength: 65536
 
     WebAuthnAssertionResponse:
       type: object
@@ -5128,9 +5318,11 @@ components:
         id:
           type: string
           format: base64url
+          maxLength: 1024
         rawId:
           type: string
           format: base64url
+          maxLength: 1024
         type:
           type: string
           const: public-key
@@ -5142,17 +5334,21 @@ components:
             clientDataJSON:
               type: string
               format: base64url
+              maxLength: 65536
             authenticatorData:
               type: string
               format: base64url
+              maxLength: 1024
             signature:
               type: string
               format: base64url
+              maxLength: 1024
             userHandle:
               type:
                 - string
                 - "null"
               format: base64url
+              maxLength: 1024
 
     PasskeyCredential:
       type: object
@@ -5172,6 +5368,9 @@ components:
         authenticatorType:
           type: string
           enum: [platform, cross-platform]
+        signCount:
+          type: integer
+          description: Signature counter for clone detection (WebAuthn spec)
         displayName:
           type: string
         createdAt:
@@ -5257,31 +5456,39 @@ components:
           default: true
         issuer:
           type: string
+          maxLength: 2048
         metadataUrl:
           type: string
           format: uri
+          maxLength: 2048
           description: SAML metadata URL or OIDC discovery URL
         clientId:
           type: string
+          maxLength: 255
           description: OIDC client ID
         clientSecret:
           type: string
+          maxLength: 1024
           writeOnly: true
           description: OIDC client secret (encrypted at rest with AES-256-GCM)
         samlCertificate:
           type: string
+          maxLength: 65536
           description: SAML IdP signing certificate (PEM)
         attributeMapping:
           type: object
           properties:
             email:
               type: string
+              maxLength: 255
               default: email
             firstName:
               type: string
+              maxLength: 255
               default: given_name
             lastName:
               type: string
+              maxLength: 255
               default: family_name
       additionalProperties: false
 
@@ -5341,6 +5548,10 @@ components:
         role:
           type: string
           enum: [platform_owner, org_owner, org_admin, org_member]
+          description: |
+            User's role. `platform_owner` is set at setup time only and cannot be
+            assigned via the API. Create/update operations accept only
+            `org_owner`, `org_admin`, `org_member`.
         status:
           type: string
           enum: [active, suspended, invited]
@@ -5376,6 +5587,7 @@ components:
         email:
           type: string
           format: email
+          maxLength: 254
         firstName:
           type: string
           minLength: 1
@@ -5395,6 +5607,7 @@ components:
           items:
             type: string
             format: uuid
+          maxItems: 100
       additionalProperties: false
 
     UserUpdate:
@@ -5417,6 +5630,7 @@ components:
           items:
             type: string
             format: uuid
+          maxItems: 100
       additionalProperties: false
 
     # ── Groups ──
@@ -5540,6 +5754,7 @@ components:
           format: uuid
         scope:
           type: string
+          maxLength: 255
       additionalProperties: false
 
     # ── Agents ──
@@ -5773,12 +5988,15 @@ components:
           enum: [single_use, persistent]
         token:
           type: string
-          writeOnly: true
-          description: Token value (only included on creation)
+          description: |
+            Token value. Returned ONLY in the 201 creation response.
+            Never included in list or get responses. Cannot be retrieved again.
         labels:
           type: object
           additionalProperties:
             type: string
+            maxLength: 255
+          maxProperties: 50
         usedCount:
           type: integer
         maxUses:
@@ -5918,17 +6136,21 @@ components:
           items:
             type: string
             format: uuid
+          maxItems: 1000
           description: Explicit agent IDs
         labels:
           type: object
           additionalProperties:
             type: string
+            maxLength: 255
+          maxProperties: 50
           description: "Label selectors (AND'd). Example: {env: production, role: webserver}"
         groupIds:
           type: array
           items:
             type: string
             format: uuid
+          maxItems: 100
           description: All agents in these groups
         all:
           type: boolean
@@ -5941,6 +6163,7 @@ components:
             Must be `true` when `all` is `true`. Server rejects the request if
             `all: true` without `confirmAll: true` (NIST AC-6 — prevent accidental
             broad-scope operations).
+      additionalProperties: false
 
     BulkExecJob:
       type: object
@@ -6125,8 +6348,9 @@ components:
           type: boolean
         secret:
           type: string
-          description: Signing secret — only returned on creation
-          writeOnly: true
+          description: |
+            HMAC-SHA256 signing secret. Returned ONLY in the 201 creation response.
+            Never included in list or get responses. Cannot be retrieved again.
         lastDeliveryAt:
           type:
             - string
@@ -6152,6 +6376,7 @@ components:
         url:
           type: string
           format: uri
+          maxLength: 2048
           description: |
             Endpoint to receive webhook events. All payloads are signed with HMAC-SHA256.
 
@@ -6167,11 +6392,19 @@ components:
             - All other HTTP URLs are still rejected, even in dev mode.
 
             Webhook deliveries are audit-logged regardless of mode.
+
+            **SSRF Prevention (OWASP A10, API7):**
+            - Internal IPs blocked in production (127/8, 10/8, 172.16/12, 192.168/16)
+            - Cloud metadata endpoints blocked (169.254.169.254)
+            - HTTP redirects disabled on webhook delivery
+            - URL scheme restricted to https:// (production) or http://localhost (dev)
         events:
           type: array
           items:
             type: string
+            maxLength: 100
           minItems: 1
+          maxItems: 50
           description: |
             Event types to subscribe to. Supports wildcards:
             - `agent.*` — all agent events
@@ -6184,6 +6417,7 @@ components:
         secret:
           type: string
           minLength: 32
+          maxLength: 512
           writeOnly: true
           description: HMAC-SHA256 signing secret. Auto-generated if omitted.
       additionalProperties: false
@@ -6194,6 +6428,7 @@ components:
         url:
           type: string
           format: uri
+          maxLength: 2048
           description: |
             Endpoint to receive webhook events. See WebhookSubscriptionCreate
             for URL validation rules per mode.
@@ -6201,7 +6436,9 @@ components:
           type: array
           items:
             type: string
+            maxLength: 100
           minItems: 1
+          maxItems: 50
           description: |
             Event types to subscribe to. Supports wildcards:
             - `agent.*` — all agent events
@@ -6213,6 +6450,7 @@ components:
         secret:
           type: string
           minLength: 32
+          maxLength: 512
           writeOnly: true
           description: HMAC-SHA256 signing secret. Replaces existing secret.
       additionalProperties: false
@@ -6321,13 +6559,19 @@ components:
           description: "Ed25519 Phase 1, ML-DSA-65 when Go stdlib ships it"
         sessionTimeout:
           type: integer
-          description: Session idle timeout in minutes
+          minimum: 5
+          maximum: 1440
+          description: Session idle timeout in minutes (5 min to 24 hours)
         accessTokenLifetime:
           type: integer
-          description: Access token lifetime in seconds
+          minimum: 60
+          maximum: 86400
+          description: Access token lifetime in seconds (1 min to 24 hours)
         refreshTokenLifetime:
           type: integer
-          description: Refresh token lifetime in seconds
+          minimum: 300
+          maximum: 2592000
+          description: Refresh token lifetime in seconds (5 min to 30 days)
         databasePath:
           type: string
         databaseEncryption:
@@ -6340,6 +6584,7 @@ components:
         sessionTimeout:
           type: integer
           minimum: 5
+          maximum: 1440
         accessTokenLifetime:
           type: integer
           minimum: 60
@@ -6347,6 +6592,7 @@ components:
         refreshTokenLifetime:
           type: integer
           minimum: 300
+          maximum: 2592000
       additionalProperties: false
 
 
