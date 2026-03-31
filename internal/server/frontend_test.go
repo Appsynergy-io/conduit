@@ -142,6 +142,34 @@ func TestFrontendHandler_SubpathWithDirectory(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "terminal")
 }
 
+func TestFrontendHandler_CacheHeaders(t *testing.T) {
+	h := newFrontendHandler(testFS())
+
+	// Hashed static assets get immutable cache
+	req := httptest.NewRequest(http.MethodGet, "/_next/static/a.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "public, max-age=31536000, immutable", rec.Header().Get("Cache-Control"))
+
+	// HTML pages get no-cache
+	req = httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+
+	// SPA fallback gets no-cache
+	req = httptest.NewRequest(http.MethodGet, "/unknown/route", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+}
+
 func TestFrontendHandler_MissingBuild(t *testing.T) {
 	// When embedded FS has no web/out directory, fs.Sub fails and placeholder is served.
 	// fstest.MapFS treats any prefix as valid via Sub, so use a nil FS wrapper instead.

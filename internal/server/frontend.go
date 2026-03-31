@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+// setCacheHeaders sets Cache-Control based on the asset path.
+// Hashed static assets (_next/) are immutable; HTML pages must revalidate.
+func setCacheHeaders(w http.ResponseWriter, path string) {
+	if strings.HasPrefix(path, "/_next/static/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+}
+
 // newFrontendHandler creates an http.Handler that serves the embedded Next.js
 // static export. It serves files from the embedded filesystem and falls back
 // to index.html for client-side routing (SPA behavior).
@@ -48,6 +58,7 @@ func newFrontendHandler(embedded fs.FS) http.Handler {
 				stat, statErr := f.Stat()
 				f.Close()
 				if statErr == nil && !stat.IsDir() {
+					setCacheHeaders(w, path)
 					fileServer.ServeHTTP(w, r)
 					return
 				}
@@ -59,6 +70,7 @@ func newFrontendHandler(embedded fs.FS) http.Handler {
 			htmlPath := strings.TrimPrefix(path, "/") + ".html"
 			if f, err := sub.Open(htmlPath); err == nil {
 				f.Close()
+				w.Header().Set("Cache-Control", "no-cache")
 				r.URL.Path = path + ".html"
 				fileServer.ServeHTTP(w, r)
 				return
@@ -66,6 +78,7 @@ func newFrontendHandler(embedded fs.FS) http.Handler {
 		}
 
 		// Fall back to index.html for SPA routing
+		w.Header().Set("Cache-Control", "no-cache")
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})
