@@ -1087,6 +1087,181 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   # ════════════════════════════════════════════════════════════════
+  # AUTH — Account Recovery
+  # ════════════════════════════════════════════════════════════════
+
+  /auth/recovery/generate:
+    post:
+      operationId: generateRecoveryCodes
+      summary: Generate one-time recovery codes
+      description: |
+        Generates 10 one-time recovery codes. Each code is 16 characters
+        alphanumeric, returned in plaintext in this response ONLY. Codes
+        are stored as Argon2id hashes (m=64MB, t=3, p=4) and cannot be
+        retrieved again.
+
+        Returns 409 if codes already exist — use `/auth/recovery/regenerate`
+        to replace existing codes.
+
+        User must record these codes securely (offline storage recommended).
+        Each code is single-use: once consumed via `/auth/recovery/verify`,
+        it cannot be reused.
+
+        **NIST IA-2, IA-5:** Multi-factor backup credential issuance.
+        **NIST AU-2:** Audit recovery code generation events.
+        **x-audit-event:** auth.recovery.generate
+      tags: [Auth]
+      x-nist-controls: [IA-2, IA-5, AU-2]
+      x-owasp: [A01, A02, A07, API2]
+      x-audit-event: auth.recovery.generate
+      responses:
+        "200":
+          description: Recovery codes generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: |
+            Recovery codes already exist. Use `/auth/recovery/regenerate`
+            to invalidate existing codes and generate new ones.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /auth/recovery/regenerate:
+    post:
+      operationId: regenerateRecoveryCodes
+      summary: Regenerate recovery codes (invalidates existing)
+      description: |
+        Deletes all existing recovery codes for the authenticated user
+        and generates 10 new ones. Returns plaintext codes in this
+        response ONLY — they cannot be retrieved again.
+
+        Use when existing codes are lost, compromised, or running low.
+
+        **NIST IA-2, IA-5:** Credential lifecycle management.
+        **NIST AU-2:** Audit recovery code regeneration events.
+        **x-audit-event:** auth.recovery.regenerate
+      tags: [Auth]
+      x-nist-controls: [IA-2, IA-5, AU-2]
+      x-owasp: [A01, A02, A07, API2]
+      x-audit-event: auth.recovery.regenerate
+      responses:
+        "200":
+          description: New recovery codes generated, previous codes invalidated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /auth/recovery/verify:
+    post:
+      operationId: verifyRecoveryCode
+      summary: Use recovery code to obtain limited-scope JWT
+      description: |
+        Validates a one-time recovery code and returns a short-lived JWT
+        (5 minutes) scoped exclusively to passkey registration endpoints
+        (`/auth/webauthn/register/*`). All other endpoints return 403
+        with this token.
+
+        The code is marked as used (single-use) upon successful verification
+        and cannot be reused.
+
+        Returns identical error responses regardless of failure reason
+        (invalid email, wrong code, used code, no codes exist) to prevent
+        user enumeration (NIST AC-7).
+
+        **NIST IA-2, IA-5, IA-11:** Re-authentication for account recovery.
+        **NIST AC-7:** Failed attempt lockout — max 5 attempts per email per hour.
+        **NIST AU-2:** Audit all recovery verification attempts.
+        **x-audit-event:** auth.recovery.verify
+      tags: [Auth]
+      security: []
+      x-nist-controls: [IA-2, IA-5, IA-11, AC-7, AU-2]
+      x-owasp: [A01, A02, A07, API2]
+      x-rate-limit:
+        window: 1h
+        max: 5
+        strategy: email
+        description: Max 5 attempts per email per hour to prevent brute force
+      x-audit-event: auth.recovery.verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, recoveryCode]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 254
+                recoveryCode:
+                  type: string
+                  minLength: 16
+                  maxLength: 16
+                  pattern: "^[a-zA-Z0-9]{16}$"
+              additionalProperties: false
+      responses:
+        "200":
+          description: |
+            Recovery code valid. Returns limited-scope JWT for passkey
+            registration only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: |
+            Recovery code invalid, expired, already used, or email not found.
+            Identical error regardless of failure reason — no user
+            enumeration (NIST AC-7).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/recovery/status:
+    get:
+      operationId: getRecoveryCodeStatus
+      summary: Get count of remaining unused recovery codes
+      description: |
+        Returns how many unused recovery codes remain for the authenticated
+        user. Does not return the codes themselves — codes are shown only
+        once at generation time.
+
+        **NIST IA-5:** Credential status monitoring.
+      tags: [Auth]
+      x-nist-controls: [IA-5]
+      x-owasp: [A01, API1, API3]
+      responses:
+        "200":
+          description: Recovery code status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodeStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ════════════════════════════════════════════════════════════════
   # AUTH — CLI Device Flow
   # ════════════════════════════════════════════════════════════════
 
@@ -1969,6 +2144,67 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /users/{userId}/recovery/reset:
+    post:
+      operationId: resetUserRecovery
+      summary: Admin reset of user auth state
+      description: |
+        Invalidates all passkeys and recovery codes for the specified user,
+        forcing re-registration on next login. This is the "contacting staff"
+        recovery path for users who have lost both their passkeys and
+        recovery codes.
+
+        Requires platform_owner or org_admin role. The admin should
+        communicate the re-registration process to the user out-of-band.
+
+        **NIST AC-2:** Account management — admin-initiated credential reset.
+        **NIST IA-2, IA-5:** Re-authentication and credential lifecycle.
+        **NIST AU-2:** Audit all admin recovery reset events.
+        **x-audit-event:** admin.user.recovery.reset
+      tags: [Users]
+      x-nist-controls: [AC-2, IA-2, IA-5, AU-2]
+      x-owasp: [A01, A07, API1, API5]
+      x-audit-event: admin.user.recovery.reset
+      parameters:
+        - $ref: "#/components/parameters/PathUserId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: Reason for admin-initiated recovery reset
+              additionalProperties: false
+      responses:
+        "200":
+          description: User auth state reset successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [userId, passkeysRevoked, recoveryCodesRevoked]
+                properties:
+                  userId:
+                    type: string
+                    format: uuid
+                  passkeysRevoked:
+                    type: integer
+                    description: Number of passkeys invalidated
+                  recoveryCodesRevoked:
+                    type: integer
+                    description: Number of recovery codes invalidated
+                additionalProperties: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   # ════════════════════════════════════════════════════════════════
   # GROUPS
   # ════════════════════════════════════════════════════════════════
@@ -2402,11 +2638,29 @@ paths:
         - name: label
           in: query
           description: |
-            Filter by label. Format: `key:value`.
-            Multiple labels are AND'd.
+            Filter agents by label. Format: `key:value`.
+
+            **Operators:**
+            - **AND:** Multiple `label` query parameters are AND'd together.
+              Example: `?label=env:production&label=role:web` matches agents
+              with both env=production AND role=web.
+            - **OR:** Comma-separated values for the same key.
+              Example: `label=role:web,api` matches agents where role=web OR role=api.
+            - **NOT:** Prefix with `!` to negate.
+              Example: `label=!env:staging` matches agents where env is NOT staging.
+            - **Existence:** Empty value checks key exists with any value.
+              Example: `label=env:` matches any agent that has the `env` key set.
+
+            **Syntax rules:**
+            - Keys and values are **case-sensitive**.
+            - Allowed characters: `[a-zA-Z0-9._-]` (no special characters, no escaping needed).
+            - Maximum key length: 63 characters.
+            - Maximum value length: 255 characters.
+            - Maximum total parameter length: 500 characters.
           schema:
             type: string
             maxLength: 500
+            pattern: "^!?[a-zA-Z0-9._-]{1,63}:[a-zA-Z0-9._,-]{0,255}$"
           example: "env:production"
         - name: search
           in: query
@@ -2754,7 +3008,22 @@ paths:
       description: |
         Returns time-series metrics for an agent — CPU, RAM, disk, network.
         Data sourced from `AGENT_INFO` CWP frames.
-        Stored in VictoriaMetrics or SQLite ring-buffer.
+
+        **Retention:** 30 days at full resolution, then deleted.
+        CE uses a SQLite ring-buffer; SaaS uses VictoriaMetrics
+        (implementation detail, not exposed in the API).
+
+        **Aggregation by period:**
+
+        | Period | Resolution      | Max data points |
+        |--------|-----------------|-----------------|
+        | 1h     | 1 per minute    | 60              |
+        | 6h     | 1 per minute    | 360             |
+        | 24h    | 1 per 5 minutes | 288             |
+        | 7d     | 1 per hour      | 168             |
+        | 30d    | 1 per 6 hours   | 120             |
+
+        Maximum 500 data points per metric per response.
 
         **NIST SI-4:** System monitoring.
       tags: [Agents, Metrics]
@@ -2833,13 +3102,98 @@ paths:
                 properties:
                   status:
                     type: string
-                    enum: [downloading, verifying, applying, complete, failed]
+                    enum: [downloading, verifying, applying, complete, failed, rolled_back]
                   targetVersion:
                     type: string
+                  previousVersion:
+                    type: string
+                    maxLength: 50
+                    description: |
+                      Version the agent was running before this update.
+                      Used as the rollback target if rollback is triggered.
+                  rollbackAvailable:
+                    type: boolean
+                    description: |
+                      Whether rollback to previousVersion is possible.
+                      True when the agent retains the previous binary.
+                  rollbackReason:
+                    type:
+                      - string
+                      - "null"
+                    maxLength: 500
+                    description: |
+                      If status is rolled_back, explains why rollback occurred
+                      (e.g., health check failure, manual trigger).
                   signatureAlgorithm:
                     type: string
                     const: "SLH-DSA-SHA2-256s"
                     description: FIPS 205 post-quantum signature
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /agents/{agentId}/update/rollback:
+    post:
+      operationId: rollbackAgentUpdate
+      summary: Rollback agent to previous version
+      description: |
+        Triggers a rollback of the agent binary to the previous version.
+        The agent retains one previous binary version. Rollback is available
+        when rollbackAvailable is true in the update status.
+
+        Automatic rollback occurs on health check failure during the
+        `applying` phase. This endpoint enables manual rollback.
+
+        **NIST CM-3, CM-5:** Configuration change control with access restrictions.
+        **NIST SI-7:** Software integrity verification on rollback binary.
+        **x-audit-event:** agent.update.rollback
+      tags: [Agents, Binary Signing]
+      x-nist-controls: [CM-3, CM-5, SI-7]
+      x-owasp: [A01, A08, API1, API5]
+      x-audit-event: agent.update.rollback
+      parameters:
+        - $ref: "#/components/parameters/PathAgentId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: Optional reason for manual rollback
+              additionalProperties: false
+      responses:
+        "202":
+          description: Rollback initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, targetVersion, previousVersion]
+                properties:
+                  status:
+                    type: string
+                    const: rolled_back
+                  targetVersion:
+                    type: string
+                    description: The version being rolled back to
+                  previousVersion:
+                    type: string
+                    description: The version being rolled back from
+        "400":
+          description: |
+            Rollback not available. The agent may not have a previous
+            version stored, or no update has been performed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5173,6 +5527,73 @@ components:
         user:
           $ref: "#/components/schemas/User"
 
+    RecoveryCodesResponse:
+      type: object
+      required: [codes, generatedAt, count]
+      properties:
+        codes:
+          type: array
+          items:
+            type: string
+            minLength: 16
+            maxLength: 16
+            pattern: "^[a-zA-Z0-9]{16}$"
+          minItems: 10
+          maxItems: 10
+          description: |
+            Plaintext recovery codes. Shown ONLY in this response.
+            Cannot be retrieved again. User must record them securely.
+        count:
+          type: integer
+          const: 10
+        generatedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+
+    RecoveryTokenResponse:
+      type: object
+      required: [accessToken, expiresIn, tokenType, scope]
+      properties:
+        accessToken:
+          type: string
+          description: |
+            Short-lived JWT (5 minutes). Scope limited to passkey registration
+            endpoints only (/auth/webauthn/register/*). Ed25519 signed.
+        expiresIn:
+          type: integer
+          description: Token lifetime in seconds
+          const: 300
+        tokenType:
+          type: string
+          const: Bearer
+        scope:
+          type: string
+          const: "passkey:register"
+          description: |
+            Token scope. Only passkey registration is permitted.
+            All other endpoints return 403 with this token.
+      additionalProperties: false
+
+    RecoveryCodeStatus:
+      type: object
+      required: [remainingCodes, totalCodes, hasRecoveryCodes]
+      properties:
+        remainingCodes:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: Number of unused recovery codes remaining
+        totalCodes:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: Total codes generated (used + unused)
+        hasRecoveryCodes:
+          type: boolean
+          description: Whether the user has generated recovery codes at all
+      additionalProperties: false
+
     WebAuthnCreationOptions:
       type: object
       description: PublicKeyCredentialCreationOptions per WebAuthn spec
@@ -5933,23 +6354,38 @@ components:
 
     AgentMetrics:
       type: object
-      required: [agentId, period]
+      required: [agentId, period, resolution, retentionDays]
       properties:
         agentId:
           type: string
           format: uuid
         period:
           type: string
+        resolution:
+          type: string
+          enum: ["1m", "5m", "1h", "6h"]
+          description: |
+            Actual interval between data points. Determined by the
+            requested period: 1h/6h → 1m, 24h → 5m, 7d → 1h, 30d → 6h.
+        retentionDays:
+          type: integer
+          const: 30
+          description: |
+            Number of days metrics are retained at full resolution
+            before deletion. Informational.
         cpu:
           type: array
+          maxItems: 500
           items:
             $ref: "#/components/schemas/MetricDataPoint"
         memory:
           type: array
+          maxItems: 500
           items:
             $ref: "#/components/schemas/MetricDataPoint"
         disk:
           type: array
+          maxItems: 500
           items:
             $ref: "#/components/schemas/MetricDataPoint"
         network:
@@ -5957,10 +6393,12 @@ components:
           properties:
             rxBytes:
               type: array
+              maxItems: 500
               items:
                 $ref: "#/components/schemas/MetricDataPoint"
             txBytes:
               type: array
+              maxItems: 500
               items:
                 $ref: "#/components/schemas/MetricDataPoint"
 
@@ -6167,6 +6605,10 @@ components:
 
     BulkExecJob:
       type: object
+      description: |
+        Bulk command execution job. Total output is bounded: each agent's
+        stdout and stderr is limited to 1MB (truncated if exceeded), and
+        the results array is limited to 1000 entries.
       required: [id, command, status, createdAt]
       properties:
         id:
@@ -6185,6 +6627,7 @@ components:
           type: integer
         results:
           type: array
+          maxItems: 1000
           items:
             type: object
             required: [agentId, status]
@@ -6203,8 +6646,22 @@ components:
                   - "null"
               stdout:
                 type: string
+                maxLength: 1048576
+                description: |
+                  Standard output. Output exceeding 1MB is truncated.
+                  Check the truncated field.
               stderr:
                 type: string
+                maxLength: 1048576
+                description: |
+                  Standard error. Output exceeding 1MB is truncated.
+                  Check the truncated field.
+              truncated:
+                type: boolean
+                default: false
+                description: |
+                  True if stdout or stderr was truncated due to
+                  exceeding the 1MB (1,048,576 byte) per-field limit.
               duration:
                 type: number
                 description: Execution time in seconds

@@ -56,99 +56,132 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 
 ---
 
-## What We Are Building
+## Implementation Status
+
+Status: `spec-only` | `in-progress` | `done`
 
 ### Server Core
-- QUIC + WebSocket dual listeners (UDP 443 + TCP 443)
-- HTTP/3 serving for browsers + HTTP/2 fallback
-- ACME TLS auto-provisioning (Let's Encrypt)
-- X25519MLKEM768 hybrid PQC TLS on all connections
-- SQLite database (pure Go, `modernc.org/sqlite`) with app-layer AES-256-GCM on sensitive fields
-- Embedded static frontend via `embed.FS`
-- First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey)
-- WebSocket EventBus for real-time dashboard updates
-- OpenAPI 3.1 spec generation
-- `server.yaml` configuration file
-- Input validation middleware — unknown JSON fields rejected on all endpoints
-- Parameterized queries only — no raw SQL interpolation
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| QUIC + WebSocket dual listeners (UDP 443 + TCP 443) | spec-only | — |
+| HTTP/3 serving for browsers + HTTP/2 fallback | spec-only | — |
+| ACME TLS auto-provisioning (Let's Encrypt) | spec-only | — |
+| X25519MLKEM768 hybrid PQC TLS on all connections | spec-only | — |
+| SQLite database (pure Go, `modernc.org/sqlite`) with AES-256-GCM on sensitive fields | spec-only | — |
+| Embedded static frontend via `embed.FS` | spec-only | Frontend |
+| First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey) | spec-only | Auth, DB |
+| WebSocket EventBus for real-time dashboard updates | spec-only | HTTP server |
+| `server.yaml` configuration file | spec-only | — |
+| Input validation middleware — unknown JSON fields rejected | spec-only | Router |
+| Parameterized queries only — no raw SQL interpolation | spec-only | DB |
 
 ### Auth & Identity
-- WebAuthn passkey registration + login (sole production auth)
-- Dev-mode password fallback (Argon2id hashed)
-- JWT issuance and validation (Ed25519 signed, short-lived)
-- Users + groups + RBAC (platform_owner, org_owner, org_admin, org_member)
-- SAML/OIDC SSO (passkeys remain primary)
-- CLI browser device flow (passkey → CLI token)
-- CLI credential storage (encrypted, per-profile)
-- All authenticated sessions (web, CLI, CI) visible and revocable from dashboard
-- CI token support (`CONDUIT_TOKEN` env var, scoped, revocable tokens)
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| WebAuthn passkey registration + login (sole production auth) | spec-only | DB, Users |
+| Dev-mode password fallback (Argon2id hashed) | spec-only | DB, Users |
+| JWT issuance and validation (Ed25519 signed, short-lived) | spec-only | — |
+| Users + groups + RBAC (platform_owner, org_owner, org_admin, org_member) | spec-only | DB |
+| Account recovery via one-time recovery codes (Argon2id hashed, single-use) | spec-only | Auth, Users, Passkeys |
+| Admin-assisted account recovery (reset user auth state) | spec-only | Auth, Users, RBAC |
+| SAML/OIDC SSO (passkeys remain primary) | spec-only | Auth, Users |
+| CLI browser device flow (passkey → CLI token) | spec-only | Auth, JWT |
+| CLI credential storage (encrypted, per-profile) | spec-only | CLI |
+| All authenticated sessions (web, CLI, CI) visible and revocable | spec-only | Auth, DB |
+| CI token support (`CONDUIT_TOKEN` env var, scoped, revocable) | spec-only | Auth, DB |
 
 ### Agent & Connections
-- Agent outbound QUIC connection (primary)
-- Agent automatic WebSocket fallback (if QUIC/UDP blocked)
-- CWP wire protocol — identical binary framing over QUIC and WebSocket
-- Agent registration flow (single-use + persistent join tokens with label scoping)
-- Agent heartbeat and connection status in dashboard
-- Dashboard shows transport type per agent (QUIC vs WebSocket)
-- Linux amd64 + arm64 agent builds
-- Windows amd64 agent build
-- macOS arm64 agent build + launchd service
-- Agent auto-update (signed binary push from master)
-- Full host visibility per agent: CPU, memory, disk, network, services, ports
-- Agent metrics dashboard (CPU, RAM, disk — `AGENT_INFO` frames)
-- Universal resource labelling system for surgical targeting
-- Agent installed as system service (systemd / launchd / Windows service) via `conduit join`
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| Agent outbound QUIC connection (primary) | spec-only | CWP |
+| Agent automatic WebSocket fallback (if QUIC/UDP blocked) | spec-only | CWP |
+| CWP wire protocol — identical binary framing over QUIC and WebSocket | spec-only | — |
+| Agent registration flow (single-use + persistent join tokens) | spec-only | Auth, DB |
+| Agent heartbeat and connection status in dashboard | spec-only | CWP, EventBus |
+| Dashboard shows transport type per agent (QUIC vs WebSocket) | spec-only | EventBus |
+| Linux amd64 + arm64 agent builds | spec-only | Agent |
+| Windows amd64 agent build | spec-only | Agent |
+| macOS arm64 agent build + launchd service | spec-only | Agent |
+| Agent auto-update with rollback (signed binary push) | spec-only | Agent, Binary Signing |
+| Full host visibility per agent: CPU, memory, disk, network, services, ports | spec-only | CWP |
+| Agent metrics dashboard (CPU, RAM, disk — `AGENT_INFO` frames) | spec-only | CWP, EventBus |
+| Universal resource labelling system for surgical targeting | spec-only | DB |
+| Agent installed as system service (systemd / launchd / Windows) via `conduit join` | spec-only | Agent |
 
 ### Shell & Terminal
-- Shell sessions in browser (xterm.js, full feature parity)
-- PTY shell execution on agent (Linux, macOS, Windows via ConPTY)
-- Multiple concurrent shell sessions per agent (multiplexed via CWP)
-- Terminal session recording + playback (asciicast v2)
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| Shell sessions in browser (xterm.js, full feature parity) | spec-only | CWP, Frontend |
+| PTY shell execution on agent (Linux, macOS, Windows via ConPTY) | spec-only | Agent |
+| Multiple concurrent shell sessions per agent (multiplexed via CWP) | spec-only | CWP |
+| Terminal session recording + playback (asciicast v2) | spec-only | Shell, DB |
 
 ### File Management
-- Browser-based file manager (list, download, upload, delete, rename, mkdir, preview)
-- File transfer over HTTPS/QUIC — no SFTP protocol dependency
-- Resumable file uploads
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| Browser-based file manager (list, download, upload, delete, rename, mkdir, preview) | spec-only | CWP, Frontend |
+| File transfer over HTTPS/QUIC — no SFTP dependency | spec-only | CWP |
+| Resumable file uploads | spec-only | CWP |
 
 ### CLI & TUI
-- CLI binary (`conduit`) — auth, server list, shell, file transfer
-- CLI runs as full TUI (bubbletea) when no arguments given
-- CLI-only mode on personal devices (zero daemons, zero listeners)
-- CLI exec commands — bulk exec from terminal
-- CLI group, user, audit management commands
-- CLI lights-out basic (reboot/poweroff via agent)
-- Shell completions (bash, zsh, fish, PowerShell)
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| CLI binary (`conduit`) — auth, server list, shell, file transfer | spec-only | Auth, CWP |
+| CLI runs as full TUI (bubbletea) when no arguments given | spec-only | CLI |
+| CLI-only mode on personal devices (zero daemons, zero listeners) | spec-only | CLI |
+| CLI exec commands — bulk exec from terminal | spec-only | CLI, Bulk Exec |
+| CLI group, user, audit management commands | spec-only | CLI, Auth |
+| CLI lights-out basic (reboot/poweroff via agent) | spec-only | CLI, CWP |
+| Shell completions (bash, zsh, fish, PowerShell) | spec-only | CLI |
 
 ### Bulk Operations
-- Bulk command execution — multi-server parallel script runner
-- Binary deployment service
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| Bulk command execution — multi-server parallel script runner | spec-only | CWP, Agent |
+| Binary deployment service | spec-only | Agent, Binary Signing |
 
 ### Audit & Compliance
-- Audit logging for all access events (who accessed what, when, from where)
-- Audit log viewer in dashboard (search, filter, query)
-- Webhooks on audit events (HMAC-SHA256 signed payloads, HTTPS-only in production)
-- Webhook subscription management (create, update, delete, test)
-- Webhook delivery history with retry tracking
-- Dev mode: webhook delivery to `http://localhost` loopback and self-signed HTTPS
-- NIST SP 800-53 Rev. 5 control coverage
-- NIST SP 800-131A cryptographic compliance
-- Security audit readiness (SOC 2 Type II, penetration test ready)
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| Audit logging for all access events | spec-only | DB |
+| Audit log viewer in dashboard (search, filter, query) | spec-only | Frontend, DB |
+| Webhooks on audit events (HMAC-SHA256 signed, HTTPS-only in prod) | spec-only | DB |
+| Webhook subscription management (create, update, delete, test) | spec-only | DB |
+| Webhook delivery history with retry tracking | spec-only | DB |
+| Dev mode: webhook delivery to `http://localhost` loopback | spec-only | Webhooks |
+| NIST SP 800-53 Rev. 5 control coverage | spec-only | All |
+| NIST SP 800-131A cryptographic compliance | spec-only | All |
+| Security audit readiness (SOC 2 Type II, penetration test ready) | spec-only | All |
 
 ### Real-Time Dashboard
-- WebSocket EventBus for live updates — no polling, no manual refresh
-- Agent connect/disconnect events push to all browsers immediately
-- Shell session start/stop events
-- File operation events
-- Auth events (login, logout, session revocation)
-- Agent metrics streaming
-- Channel-based subscriptions (agents, shell, files, auth, audit, metrics, exec, system)
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| WebSocket EventBus for live updates — no polling | spec-only | HTTP server |
+| Agent connect/disconnect events push to all browsers | spec-only | EventBus |
+| Shell session start/stop events | spec-only | EventBus, Shell |
+| File operation events | spec-only | EventBus, Files |
+| Auth events (login, logout, session revocation) | spec-only | EventBus, Auth |
+| Agent metrics streaming | spec-only | EventBus, CWP |
+| Channel-based subscriptions (agents, shell, files, auth, audit, metrics, exec, system) | spec-only | EventBus |
 
 ### Promotional Website
-- Public marketing landing page served from same binary
-- Fortune 500-quality UI/UX
-- SEO optimized for remote access, infrastructure access keywords
-- Pre-generated OG images (build-time, static assets in `public/og/`)
-- Core Web Vitals targets met (LCP <=2.5s, INP <=200ms, CLS <=0.1)
+
+| Feature | Status | Dependencies |
+|---------|--------|--------------|
+| Public marketing landing page served from same binary | spec-only | Frontend |
+| Fortune 500-quality UI/UX | spec-only | Frontend |
+| SEO optimized for remote access, infrastructure access keywords | spec-only | Frontend |
+| Pre-generated OG images (build-time, static assets in `public/og/`) | spec-only | Frontend |
+| Core Web Vitals targets met (LCP <=2.5s, INP <=200ms, CLS <=0.1) | spec-only | Frontend |
 
 ---
 
