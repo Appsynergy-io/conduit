@@ -127,5 +127,14 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 		Outcome:   "success",
 	})
 
+	s.publishEvent(ctx, claims.TenantID, Event{
+		Channel: "auth",
+		Type:    "session.revoked",
+		Data: map[string]string{
+			"sessionId":    sessionID,
+			"targetUserId": session.UserID,
+		},
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
