@@ -26,6 +26,7 @@ type Server struct {
 	logger    *slog.Logger
 	httpSrv   *http.Server
 	tlsConfig *tls.Config
+	eventBus  *EventBus
 }
 
 // New creates a Server with all dependencies wired.
@@ -36,6 +37,7 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 		jwtMgr:    jwtMgr,
 		logger:    logger,
 		tlsConfig: tlsConfig,
+		eventBus:  NewEventBus(logger),
 	}
 	s.router = s.buildRouter()
 	return s
@@ -61,6 +63,9 @@ func (s *Server) buildRouter() chi.Router {
 	// Public routes (no auth)
 	r.Get("/health", s.handleHealth)
 
+	// WebSocket EventBus (outside RequireJSON — WebSocket upgrade is not JSON)
+	r.Get("/api/v1/events/stream", s.handleEventStream)
+
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.RequireJSON)
@@ -78,6 +83,9 @@ func (s *Server) buildRouter() chi.Router {
 			r.Post("/auth/webauthn/login/begin", s.handleNotImplemented)
 			r.Post("/auth/webauthn/login/finish", s.handleNotImplemented)
 		})
+
+		// Agent registration (token-based auth, no JWT)
+		r.Post("/agents/register", s.handleAgentRegister)
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
