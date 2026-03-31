@@ -32,7 +32,7 @@ func newTestServer(t *testing.T) (*server.Server, *auth.JWTManager) {
 		Server: shared.ServerConfig{Mode: "dev", HTTPAddr: ":0"},
 	}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := server.New(cfg, database, jwtMgr, nil, logger)
+	srv := server.New(cfg, database, jwtMgr, nil, logger, nil)
 	return srv, jwtMgr
 }
 
