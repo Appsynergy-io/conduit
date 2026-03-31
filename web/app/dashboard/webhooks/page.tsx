@@ -1,9 +1,9 @@
-"use client";
+"use client"
 
-import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Webhook } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -11,60 +11,60 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/ui/table"
+import { useAuth } from "@/hooks/use-auth"
 
-interface Webhook {
-  id: string;
-  url: string;
-  events: string[];
-  enabled: boolean;
-  createdAt: string;
+interface WebhookSub {
+  id: string
+  url: string
+  events: string[]
+  enabled: boolean
+  createdAt: string
 }
 
 export default function WebhooksPage() {
-  const { token } = useAuth();
-  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { token } = useAuth()
+  const [webhooks, setWebhooks] = useState<WebhookSub[]>([])
+  const [loading, setLoading] = useState(true)
 
   const fetchWebhooks = useCallback(async () => {
-    if (!token) return;
+    if (!token) return
     try {
       const res = await fetch("/api/v1/webhooks", {
         headers: { Authorization: `Bearer ${token}` },
-      });
+      })
       if (res.ok) {
-        const data = await res.json();
-        setWebhooks(data.items ?? []);
+        const data = await res.json()
+        setWebhooks(data.items ?? [])
       }
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [token]);
+  }, [token])
 
   useEffect(() => {
-    fetchWebhooks();
-  }, [fetchWebhooks]);
+    fetchWebhooks()
+  }, [fetchWebhooks])
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Webhooks</h1>
-        <p className="text-sm text-muted-foreground">
-          Event subscriptions and delivery history.
-        </p>
+        <p className="text-sm text-muted-foreground">Event subscriptions and delivery history.</p>
       </div>
 
       {loading ? (
         <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-10 w-full" />
+          {["a", "b", "c"].map((k) => (
+            <Skeleton key={k} className="h-10 w-full" />
           ))}
         </div>
       ) : webhooks.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
-          <p className="text-lg font-medium">No webhooks configured</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create a webhook to receive event notifications.
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+          <Webhook className="h-12 w-12 text-muted-foreground/50" />
+          <h3 className="mt-4 text-lg font-medium">No webhooks configured</h3>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            Create a webhook subscription to receive real-time event notifications over HTTPS.
           </p>
         </div>
       ) : (
@@ -80,9 +80,7 @@ export default function WebhooksPage() {
             <TableBody>
               {webhooks.map((wh) => (
                 <TableRow key={wh.id}>
-                  <TableCell className="max-w-xs truncate font-mono text-xs">
-                    {wh.url}
-                  </TableCell>
+                  <TableCell className="max-w-xs truncate font-mono text-xs">{wh.url}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
                       {wh.events.map((e) => (
@@ -104,5 +102,5 @@ export default function WebhooksPage() {
         </div>
       )}
     </div>
-  );
+  )
 }

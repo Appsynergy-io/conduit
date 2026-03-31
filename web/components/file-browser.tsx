@@ -19,6 +19,7 @@ import {
   Upload,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -164,7 +165,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
 
   const uploadRef = useRef<HTMLInputElement>(null)
 
@@ -243,7 +243,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       )
 
       if (!res.ok) {
-        setActionError("Download failed")
+        toast.error("Download failed")
         return
       }
 
@@ -264,7 +264,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
     async (file: globalThis.File) => {
       if (!token) return
       setActionLoading(true)
-      setActionError(null)
 
       try {
         const targetPath = joinPath(currentPath, file.name)
@@ -282,17 +281,14 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         )
 
         if (!res.ok) {
-          if (res.status === 413) {
-            setActionError("File exceeds maximum upload size")
-          } else {
-            setActionError("Upload failed")
-          }
+          toast.error(res.status === 413 ? "File exceeds maximum upload size" : "Upload failed")
           return
         }
 
+        toast.success(`Uploaded ${file.name}`)
         await fetchEntries(currentPath)
       } catch {
-        setActionError("Upload failed")
+        toast.error("Upload failed")
       } finally {
         setActionLoading(false)
       }
@@ -315,7 +311,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
   const handleDelete = useCallback(async () => {
     if (!token || !deleteTarget) return
     setActionLoading(true)
-    setActionError(null)
 
     try {
       const filePath = joinPath(currentPath, deleteTarget.name)
@@ -332,15 +327,16 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       })
 
       if (!res.ok) {
-        setActionError("Delete failed")
+        toast.error("Delete failed")
         return
       }
 
+      toast.success(`Deleted ${deleteTarget.name}`)
       setDeleteOpen(false)
       setDeleteTarget(null)
       await fetchEntries(currentPath)
     } catch {
-      setActionError("Delete failed")
+      toast.error("Delete failed")
     } finally {
       setActionLoading(false)
     }
@@ -351,7 +347,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
   const handleRename = useCallback(async () => {
     if (!token || !renameTarget || !renameName.trim()) return
     setActionLoading(true)
-    setActionError(null)
 
     try {
       const oldPath = joinPath(currentPath, renameTarget.name)
@@ -366,20 +361,17 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       })
 
       if (!res.ok) {
-        if (res.status === 409) {
-          setActionError("A file with that name already exists")
-        } else {
-          setActionError("Rename failed")
-        }
+        toast.error(res.status === 409 ? "A file with that name already exists" : "Rename failed")
         return
       }
 
+      toast.success(`Renamed to ${renameName.trim()}`)
       setRenameOpen(false)
       setRenameTarget(null)
       setRenameName("")
       await fetchEntries(currentPath)
     } catch {
-      setActionError("Rename failed")
+      toast.error("Rename failed")
     } finally {
       setActionLoading(false)
     }
@@ -390,7 +382,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
   const handleMkdir = useCallback(async () => {
     if (!token || !mkdirName.trim()) return
     setActionLoading(true)
-    setActionError(null)
 
     try {
       const dirPath = joinPath(currentPath, mkdirName.trim())
@@ -404,19 +395,16 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       })
 
       if (!res.ok) {
-        if (res.status === 409) {
-          setActionError("Directory already exists")
-        } else {
-          setActionError("Failed to create directory")
-        }
+        toast.error(res.status === 409 ? "Directory already exists" : "Failed to create directory")
         return
       }
 
+      toast.success(`Created ${mkdirName.trim()}`)
       setMkdirOpen(false)
       setMkdirName("")
       await fetchEntries(currentPath)
     } catch {
-      setActionError("Failed to create directory")
+      toast.error("Failed to create directory")
     } finally {
       setActionLoading(false)
     }
@@ -441,7 +429,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
 
         if (!res.ok) {
           setPreviewOpen(false)
-          setActionError("Preview failed")
+          toast.error("Preview failed")
           return
         }
 
@@ -449,7 +437,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         setPreview(data)
       } catch {
         setPreviewOpen(false)
-        setActionError("Preview failed")
+        toast.error("Preview failed")
       } finally {
         setPreviewLoading(false)
       }
@@ -555,15 +543,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
           />
         </div>
       </div>
-
-      {/* Action error banner */}
-      {actionError && (
-        <Alert variant="destructive" className="mx-4 mt-2">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{actionError}</AlertDescription>
-        </Alert>
-      )}
 
       {/* Loading state */}
       {loading && (
