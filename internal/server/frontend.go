@@ -41,12 +41,16 @@ func newFrontendHandler(embedded fs.FS) http.Handler {
 		}
 
 		// Try to serve the exact file (CSS, JS, images, etc.)
+		// Skip directories — Next.js creates dirs like login/ alongside login.html
 		if path != "/" {
 			cleanPath := strings.TrimPrefix(path, "/")
 			if f, err := sub.Open(cleanPath); err == nil {
+				stat, statErr := f.Stat()
 				f.Close()
-				fileServer.ServeHTTP(w, r)
-				return
+				if statErr == nil && !stat.IsDir() {
+					fileServer.ServeHTTP(w, r)
+					return
+				}
 			}
 		}
 
