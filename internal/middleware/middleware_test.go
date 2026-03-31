@@ -29,7 +29,10 @@ func TestSecurityHeaders(t *testing.T) {
 	assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
 	assert.Equal(t, "strict-origin-when-cross-origin", resp.Header.Get("Referrer-Policy"))
 	assert.NotEmpty(t, resp.Header.Get("Permissions-Policy"))
-	assert.NotEmpty(t, resp.Header.Get("Content-Security-Policy"))
+	csp := resp.Header.Get("Content-Security-Policy")
+	assert.NotEmpty(t, csp)
+	// Next.js static export requires inline scripts for RSC flight data and hydration
+	assert.Contains(t, csp, "'unsafe-inline'", "CSP script-src must allow inline scripts for Next.js")
 }
 
 func TestRequestID(t *testing.T) {
