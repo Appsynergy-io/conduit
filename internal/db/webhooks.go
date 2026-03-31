@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // WebhookSubscription represents a row from the webhook_subscriptions table.
@@ -73,6 +74,57 @@ func (d *DB) ListWebhookSubscriptions(ctx context.Context, tenantID string) ([]W
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing webhook subscriptions: %w", err)
+	}
+	defer rows.Close()
+
+	var subs []WebhookSubscription
+	for rows.Next() {
+		var sub WebhookSubscription
+		if err := rows.Scan(&sub.ID, &sub.TenantID, &sub.URL, &sub.SecretHash, &sub.Events, &sub.Enabled, &sub.CreatedBy, &sub.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning webhook subscription: %w", err)
+		}
+		subs = append(subs, sub)
+	}
+	return subs, rows.Err()
+}
+
+// WebhookListParams holds filters for paginated webhook subscription listing.
+type WebhookListParams struct {
+	TenantID string
+	CursorAt string
+	CursorID string
+	Limit    int
+	Enabled  string // "true" or "false"
+	Search   string
+}
+
+// ListWebhooksPaginated returns webhook subscriptions with cursor-based pagination.
+func (d *DB) ListWebhooksPaginated(ctx context.Context, p WebhookListParams) ([]WebhookSubscription, error) {
+	query := `SELECT id, tenant_id, url, secret_hash, events, enabled, created_by, created_at
+	           FROM webhook_subscriptions WHERE tenant_id = ?`
+	args := []interface{}{p.TenantID}
+
+	if p.Enabled == "true" {
+		query += ` AND enabled = 1`
+	} else if p.Enabled == "false" {
+		query += ` AND enabled = 0`
+	}
+	if p.Search != "" {
+		query += ` AND url LIKE ?`
+		term := "%" + strings.ReplaceAll(p.Search, "%", "") + "%"
+		args = append(args, term)
+	}
+	if p.CursorAt != "" {
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, p.CursorAt, p.CursorAt, p.CursorID)
+	}
+
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, p.Limit+1)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing webhooks paginated: %w", err)
 	}
 	defer rows.Close()
 

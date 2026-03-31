@@ -235,6 +235,66 @@ func (d *DB) ListGroupsForUser(ctx context.Context, userID string) ([]Group, err
 	return groups, rows.Err()
 }
 
+// GroupListParams holds filters for paginated group listing.
+type GroupListParams struct {
+	TenantID string
+	CursorAt string
+	CursorID string
+	Limit    int
+	Search   string
+}
+
+// ListGroupsPaginated returns groups with cursor-based pagination and member counts.
+func (d *DB) ListGroupsPaginated(ctx context.Context, p GroupListParams) ([]Group, []int, error) {
+	query := `SELECT g.id, g.tenant_id, g.name, g.description, g.created_at, g.updated_at,
+	           (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) AS member_count
+	           FROM groups g WHERE g.tenant_id = ?`
+	args := []interface{}{p.TenantID}
+
+	if p.Search != "" {
+		query += ` AND g.name LIKE ?`
+		args = append(args, "%"+p.Search+"%")
+	}
+	if p.CursorAt != "" {
+		query += ` AND (g.created_at < ? OR (g.created_at = ? AND g.id < ?))`
+		args = append(args, p.CursorAt, p.CursorAt, p.CursorID)
+	}
+
+	query += ` ORDER BY g.created_at DESC, g.id DESC LIMIT ?`
+	args = append(args, p.Limit+1)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing groups paginated: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []Group
+	var counts []int
+	for rows.Next() {
+		var g Group
+		var count int
+		if err := rows.Scan(&g.ID, &g.TenantID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt, &count); err != nil {
+			return nil, nil, fmt.Errorf("scanning group: %w", err)
+		}
+		groups = append(groups, g)
+		counts = append(counts, count)
+	}
+	return groups, counts, rows.Err()
+}
+
+// CountGroupMembersByID returns the member count for a single group.
+func (d *DB) CountGroupMembersByID(ctx context.Context, groupID string) (int, error) {
+	var count int
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE group_id = ?`, groupID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting group members: %w", err)
+	}
+	return count, nil
+}
+
 // ListGroupsForAgent returns all groups an agent belongs to, ordered by name.
 func (d *DB) ListGroupsForAgent(ctx context.Context, agentID string) ([]Group, error) {
 	rows, err := d.conn.QueryContext(ctx,

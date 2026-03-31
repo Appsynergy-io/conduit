@@ -85,42 +85,42 @@ func (s *Server) buildRouter() chi.Router {
 			r.Use(middleware.NoCacheHeaders)
 
 			// Users
-			r.Get("/users", s.handleNotImplemented)
-			r.Post("/users", s.handleNotImplemented)
-			r.Get("/users/{userId}", s.handleNotImplemented)
-			r.Patch("/users/{userId}", s.handleNotImplemented)
+			r.Get("/users", s.handleListUsers)
+			r.Post("/users", s.handleCreateUser)
+			r.Get("/users/{userId}", s.handleGetUser)
+			r.Patch("/users/{userId}", s.handleUpdateUser)
 
 			// Groups
-			r.Get("/groups", s.handleNotImplemented)
-			r.Post("/groups", s.handleNotImplemented)
-			r.Get("/groups/{groupId}", s.handleNotImplemented)
-			r.Patch("/groups/{groupId}", s.handleNotImplemented)
-			r.Delete("/groups/{groupId}", s.handleNotImplemented)
+			r.Get("/groups", s.handleListGroups)
+			r.Post("/groups", s.handleCreateGroup)
+			r.Get("/groups/{groupId}", s.handleGetGroup)
+			r.Patch("/groups/{groupId}", s.handleUpdateGroup)
+			r.Delete("/groups/{groupId}", s.handleDeleteGroup)
 
 			// Sessions
-			r.Get("/sessions", s.handleNotImplemented)
-			r.Delete("/sessions/{sessionId}", s.handleNotImplemented)
+			r.Get("/sessions", s.handleListSessions)
+			r.Delete("/sessions/{sessionId}", s.handleRevokeSession)
 
 			// Audit
-			r.Get("/audit/events", s.handleNotImplemented)
+			r.Get("/audit/events", s.handleListAuditEvents)
 
 			// Webhooks
-			r.Get("/webhooks", s.handleNotImplemented)
-			r.Post("/webhooks", s.handleNotImplemented)
+			r.Get("/webhooks", s.handleListWebhooks)
+			r.Post("/webhooks", s.handleCreateWebhook)
 
 			// Service-scoped: remote-access
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireService("remote-access"))
 
 				// Agents
-				r.Get("/agents", s.handleNotImplemented)
-				r.Get("/agents/{agentId}", s.handleNotImplemented)
-				r.Delete("/agents/{agentId}", s.handleNotImplemented)
+				r.Get("/agents", s.handleListAgents)
+				r.Get("/agents/{agentId}", s.handleGetAgent)
+				r.Delete("/agents/{agentId}", s.handleDeleteAgent)
 
 				// Join tokens
-				r.Get("/agents/tokens", s.handleNotImplemented)
-				r.Post("/agents/tokens", s.handleNotImplemented)
-				r.Delete("/agents/tokens/{tokenId}", s.handleNotImplemented)
+				r.Get("/agents/tokens", s.handleListJoinTokens)
+				r.Post("/agents/tokens", s.handleCreateJoinToken)
+				r.Delete("/agents/tokens/{tokenId}", s.handleRevokeJoinToken)
 			})
 		})
 	})

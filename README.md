@@ -89,7 +89,7 @@ Status: `spec-only` | `in-progress` | `done`
 | SAML/OIDC SSO (passkeys remain primary) | spec-only | Auth, Users |
 | CLI browser device flow (passkey → CLI token) | spec-only | Auth, JWT |
 | CLI credential storage (encrypted, per-profile) | spec-only | CLI |
-| All authenticated sessions (web, CLI, CI) visible and revocable | spec-only | Auth, DB |
+| All authenticated sessions (web, CLI, CI) visible and revocable | done | Auth, DB |
 | CI token support (`CONDUIT_TOKEN` env var, scoped, revocable) | spec-only | Auth, DB |
 
 ### Agent & Connections
@@ -151,7 +151,7 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Audit logging for all access events | spec-only | DB |
+| Audit logging for all access events | done | DB |
 | Audit log viewer in dashboard (search, filter, query) | spec-only | Frontend, DB |
 | Webhooks on audit events (HMAC-SHA256 signed, HTTPS-only in prod) | spec-only | DB |
 | Webhook subscription management (create, update, delete, test) | spec-only | DB |
