@@ -1,18 +1,10 @@
-"use client";
+"use client"
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import {
-  Monitor,
-  Terminal,
-  FolderOpen,
-  ScrollText,
-  Users,
-  Webhook,
-  Settings,
-  LogOut,
-} from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
+import { LogOut, Monitor, Moon, ScrollText, Settings, Sun, Users, Webhook } from "lucide-react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
+import { useTheme } from "next-themes"
+import { Button } from "@/components/ui/button"
 import {
   Sidebar,
   SidebarContent,
@@ -24,8 +16,8 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
+} from "@/components/ui/sidebar"
+import { useAuth } from "@/hooks/use-auth"
 
 const navItems = [
   { title: "Agents", href: "/dashboard", icon: Monitor },
@@ -33,11 +25,12 @@ const navItems = [
   { title: "Users", href: "/dashboard/users", icon: Users },
   { title: "Webhooks", href: "/dashboard/webhooks", icon: Webhook },
   { title: "Settings", href: "/dashboard/settings", icon: Settings },
-];
+]
 
 export function AppSidebar() {
-  const pathname = usePathname();
-  const { logout } = useAuth();
+  const pathname = usePathname()
+  const { logout } = useAuth()
+  const { theme, setTheme } = useTheme()
 
   return (
     <Sidebar>
@@ -59,7 +52,7 @@ export function AppSidebar() {
                 const isActive =
                   item.href === "/dashboard"
                     ? pathname === "/dashboard"
-                    : pathname.startsWith(item.href);
+                    : pathname.startsWith(item.href)
 
                 return (
                   <SidebarMenuItem key={item.href}>
@@ -70,7 +63,7 @@ export function AppSidebar() {
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                );
+                )
               })}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -78,19 +71,31 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 text-muted-foreground"
-          onClick={() => {
-            logout();
-            window.location.href = "/login";
-          }}
-        >
-          <LogOut className="h-4 w-4" />
-          Sign out
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            aria-label="Toggle theme"
+          >
+            <Sun className="h-4 w-4 rotate-0 scale-100 transition-transform dark:-rotate-90 dark:scale-0" />
+            <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-transform dark:rotate-0 dark:scale-100" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex-1 justify-start gap-2 text-muted-foreground"
+            onClick={() => {
+              logout()
+              window.location.href = "/login"
+            }}
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </Button>
+        </div>
       </SidebarFooter>
     </Sidebar>
-  );
+  )
 }

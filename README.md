@@ -179,7 +179,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
 | Public marketing landing page served from same binary | done | Frontend |
-| Fortune 500-quality UI/UX | in-progress | Frontend |
+| Fortune 500-quality UI/UX | done | Frontend |
 | SEO optimized for remote access, infrastructure access keywords | spec-only | Frontend |
 | Pre-generated OG images (build-time, static assets in `public/og/`) | spec-only | Frontend |
 | Core Web Vitals targets met (LCP <=2.5s, INP <=200ms, CLS <=0.1) | spec-only | Frontend |

@@ -1,9 +1,9 @@
-"use client";
+"use client"
 
-import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Users } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -11,61 +11,64 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/ui/table"
+import { useAuth } from "@/hooks/use-auth"
 
 interface User {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  role: string;
-  status: string;
-  lastLoginAt?: string;
-  createdAt: string;
+  id: string
+  email: string
+  firstName: string
+  lastName: string
+  role: string
+  status: string
+  lastLoginAt?: string
+  createdAt: string
 }
 
 export default function UsersPage() {
-  const { token } = useAuth();
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { token } = useAuth()
+  const [users, setUsers] = useState<User[]>([])
+  const [loading, setLoading] = useState(true)
 
   const fetchUsers = useCallback(async () => {
-    if (!token) return;
+    if (!token) return
     try {
       const res = await fetch("/api/v1/users", {
         headers: { Authorization: `Bearer ${token}` },
-      });
+      })
       if (res.ok) {
-        const data = await res.json();
-        setUsers(data.items ?? []);
+        const data = await res.json()
+        setUsers(data.items ?? [])
       }
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [token]);
+  }, [token])
 
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    fetchUsers()
+  }, [fetchUsers])
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Users</h1>
-        <p className="text-sm text-muted-foreground">
-          Manage users and their roles.
-        </p>
+        <p className="text-sm text-muted-foreground">Manage users and their roles.</p>
       </div>
 
       {loading ? (
         <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-10 w-full" />
+          {["a", "b", "c", "d", "e"].map((k) => (
+            <Skeleton key={k} className="h-10 w-full" />
           ))}
         </div>
       ) : users.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
-          <p className="text-lg font-medium">No users</p>
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+          <Users className="h-12 w-12 text-muted-foreground/50" />
+          <h3 className="mt-4 text-lg font-medium">No users</h3>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            Users will appear here after they are created or join via SSO.
+          </p>
         </div>
       ) : (
         <div className="rounded-md border">
@@ -89,11 +92,7 @@ export default function UsersPage() {
                     <Badge variant="outline">{user.role}</Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        user.status === "active" ? "default" : "secondary"
-                      }
-                    >
+                    <Badge variant={user.status === "active" ? "default" : "secondary"}>
                       {user.status}
                     </Badge>
                   </TableCell>
@@ -104,5 +103,5 @@ export default function UsersPage() {
         </div>
       )}
     </div>
-  );
+  )
 }
