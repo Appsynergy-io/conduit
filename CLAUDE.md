@@ -308,6 +308,7 @@ Cache-Control: no-store (on sensitive responses — auth, user, session, audit)
 - **Hooks:** `use-` prefix, kebab-case (`use-auth.ts`, `use-websocket.ts`)
 - **Data fetching:** Raw `openapi-fetch` + `useState`/`useEffect`. No SWR or React Query — the WebSocket EventBus handles real-time state. Fetch on mount, EventBus updates replace state
 - **No caching libraries:** The EventBus is the revalidation layer. Two competing freshness systems create bugs
+- **User-facing warnings:** All warnings (classical crypto fallback, algorithm downgrades, security notices, recovery code low-count alerts, error states) MUST use styled shadcn/ui components — never `window.alert()`, `window.confirm()`, or unstyled browser dialogs. Use **Sonner toast** (`sonner`) for transient notifications, **shadcn Alert** for inline persistent warnings, **shadcn AlertDialog** for blocking confirmations requiring user action
 
 ### Testing Strategy
 - **Go:** Table-driven tests, `httptest` for handlers, in-memory SQLite (`:memory:`) for DB tests
@@ -327,6 +328,9 @@ Every endpoint or handler must have passing unit tests BEFORE committing. No exc
 - **Run tests before committing:** `go test ./...` must pass for Go. `pnpm test` must pass for frontend. Do not commit code with failing or missing tests.
 - **No skipping:** Do not use `t.Skip()`, `xit`, or `describe.skip` to bypass failing tests. Fix the code or fix the test.
 - Tests are not optional polish — they are a gate. Untested endpoints do not ship.
+
+### Implementation Status Tracking (MANDATORY)
+After completing any feature, update its status in the README.md implementation status table before committing. Set to `in-progress` when you start work, `done` when tests pass. Never commit code for a feature without updating its status.
 
 ### Linting & Formatting
 - **Go:** `golangci-lint` with project `.golangci.yml` — includes `gofumpt`, `govet`, `errcheck`, `staticcheck`, `gosec`, `bodyclose`, `sqlclosecheck`, `exhaustive`, `noctx`, `unparam`, `wastedassign`, `errorlint`, `tenv`
@@ -783,6 +787,12 @@ The agent must stay connected to the server at all times. Disconnection = blind 
 9. **Dev mode:** setup token persists as password_hash, both passkey and token auth available
 10. Setup mode permanently deactivated, `/setup` returns 404 forever after
 
+#### Account Recovery
+
+Two recovery paths:
+1. **One-time recovery codes**: User generates 10 codes via `/auth/recovery/generate` after passkey registration. Each code is single-use, Argon2id hashed. Using a code via `/auth/recovery/verify` returns a 5-minute JWT scoped to `passkey:register` only. User registers a new passkey within that window.
+2. **Staff-assisted reset**: Admin uses `/users/{userId}/recovery/reset` to invalidate all passkeys and recovery codes. User re-registers on next login.
+
 #### CLI Authentication
 
 - TUI/CLI opens browser to server's login page
@@ -1205,6 +1215,17 @@ CREATE TABLE ci_tokens (
     created_at TEXT NOT NULL
 );
 
+-- Recovery codes (one-time, Argon2id hashed — NIST IA-5, AC-7)
+CREATE TABLE recovery_codes (
+    id TEXT PRIMARY KEY,              -- UUID v4
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    code_hash TEXT NOT NULL,          -- Argon2id (m=64MB, t=3, p=4)
+    used INTEGER NOT NULL DEFAULT 0,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+);
+
 -- ── Indexes ──────────────────────────────────────────
 -- Foreign keys and frequently queried columns
 
@@ -1248,6 +1269,8 @@ CREATE INDEX idx_deploy_jobs_tenant_id ON deploy_jobs(tenant_id);
 CREATE INDEX idx_deploy_jobs_status ON deploy_jobs(status);
 CREATE INDEX idx_ci_tokens_tenant_id ON ci_tokens(tenant_id);
 CREATE INDEX idx_ci_tokens_created_by ON ci_tokens(created_by);
+CREATE INDEX idx_recovery_codes_user_id ON recovery_codes(user_id);
+CREATE INDEX idx_recovery_codes_tenant_id ON recovery_codes(tenant_id);
 ```
 
 Migrations embedded in binary, applied automatically at startup.
