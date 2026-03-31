@@ -191,6 +191,10 @@ func (a *Agent) handleFrame(ctx context.Context, mux *protocol.Mux, f *protocol.
 		}
 		a.resizeShell(f.StreamID, &payload)
 
+	case protocol.FrameFileList, protocol.FrameFileRead, protocol.FrameFileWrite,
+		protocol.FrameFileStat, protocol.FrameFileDelete, protocol.FrameFileRename, protocol.FrameFileMkdir:
+		a.handleFileFrame(ctx, mux, f)
+
 	default:
 		a.logger.Debug("unhandled frame",
 			"type", f.Type.String(),

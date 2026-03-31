@@ -182,17 +182,15 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		Outcome:       "success",
 	})
 
-	// Publish event to EventBus
-	if s.eventBus != nil {
-		s.eventBus.Publish(joinToken.TenantID, Event{
-			Channel: "agents",
-			Type:    "agent.registered",
-			Data: map[string]string{
-				"agentId":  agentID,
-				"hostname": req.Hostname,
-			},
-		})
-	}
+	// Publish event to EventBus + webhooks
+	s.publishEvent(ctx, joinToken.TenantID, Event{
+		Channel: "agents",
+		Type:    "agent.registered",
+		Data: map[string]string{
+			"agentId":  agentID,
+			"hostname": req.Hostname,
+		},
+	})
 
 	writeJSON(w, http.StatusCreated, agentRegisterResponse{
 		AgentID:  agentID,
