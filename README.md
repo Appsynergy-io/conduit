@@ -97,28 +97,28 @@ Status: `spec-only` | `in-progress` | `done`
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
 | Agent outbound QUIC connection (primary) | spec-only | CWP |
-| Agent automatic WebSocket fallback (if QUIC/UDP blocked) | spec-only | CWP |
+| Agent WebSocket transport with reconnection (exponential backoff + jitter) | done | CWP |
 | CWP wire protocol — identical binary framing over QUIC and WebSocket | done | — |
 | Agent registration flow (single-use + persistent join tokens) | done | Auth, DB |
 | Agent WebSocket connection handler + CWP authentication | done | CWP, EventBus |
-| Agent heartbeat and connection status in dashboard | spec-only | CWP, EventBus |
+| Agent heartbeat and connection status | done | CWP, EventBus |
 | Dashboard shows transport type per agent (QUIC vs WebSocket) | spec-only | EventBus |
-| Linux amd64 + arm64 agent builds | spec-only | Agent |
-| Windows amd64 agent build | spec-only | Agent |
-| macOS arm64 agent build + launchd service | spec-only | Agent |
+| Linux amd64 + arm64 agent builds | done | Agent |
+| Windows amd64 agent build | in-progress | Agent |
+| macOS arm64 agent build + launchd service | done | Agent |
 | Agent auto-update with rollback (signed binary push) | spec-only | Agent, Binary Signing |
-| Full host visibility per agent: CPU, memory, disk, network, services, ports | spec-only | CWP |
-| Agent metrics dashboard (CPU, RAM, disk — `AGENT_INFO` frames) | spec-only | CWP, EventBus |
+| Full host visibility per agent: CPU, memory, disk, network, services, ports | in-progress | CWP |
+| Agent metrics collection (CPU, RAM, disk, load, uptime — `AGENT_INFO` frames) | done | CWP |
 | Universal resource labelling system for surgical targeting | spec-only | DB |
-| Agent installed as system service (systemd / launchd / Windows) via `conduit join` | spec-only | Agent |
+| Agent installed as system service (systemd / launchd / Windows) via `conduit join` | done | Agent |
 
 ### Shell & Terminal
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
 | Shell sessions in browser (xterm.js, full feature parity) | spec-only | CWP, Frontend |
-| PTY shell execution on agent (Linux, macOS, Windows via ConPTY) | spec-only | Agent |
-| Multiple concurrent shell sessions per agent (multiplexed via CWP) | spec-only | CWP |
+| PTY shell execution on agent (Linux, macOS via creack/pty) | done | Agent |
+| Multiple concurrent shell sessions per agent (multiplexed via CWP) | done | CWP |
 | Terminal session recording + playback (asciicast v2) | spec-only | Shell, DB |
 
 ### File Management
@@ -133,7 +133,7 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| CLI binary (`conduit`) — auth, server list, shell, file transfer | spec-only | Auth, CWP |
+| CLI binary (`conduit`) — agent daemon, join, token, shell subcommands | in-progress | Auth, CWP |
 | CLI runs as full TUI (bubbletea) when no arguments given | spec-only | CLI |
 | CLI-only mode on personal devices (zero daemons, zero listeners) | spec-only | CLI |
 | CLI exec commands — bulk exec from terminal | spec-only | CLI, Bulk Exec |
