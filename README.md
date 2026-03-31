@@ -100,6 +100,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Agent automatic WebSocket fallback (if QUIC/UDP blocked) | spec-only | CWP |
 | CWP wire protocol — identical binary framing over QUIC and WebSocket | done | — |
 | Agent registration flow (single-use + persistent join tokens) | done | Auth, DB |
+| Agent WebSocket connection handler + CWP authentication | done | CWP, EventBus |
 | Agent heartbeat and connection status in dashboard | spec-only | CWP, EventBus |
 | Dashboard shows transport type per agent (QUIC vs WebSocket) | spec-only | EventBus |
 | Linux amd64 + arm64 agent builds | spec-only | Agent |
