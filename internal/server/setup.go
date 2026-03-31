@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -21,8 +22,7 @@ var setupToken string
 
 // InitSetup generates a setup token and stores its hash in the DB.
 // Returns the plaintext token (printed to stdout by the caller).
-func (s *Server) InitSetup() (string, error) {
-	ctx := s.httpSrv.BaseContext(nil)
+func (s *Server) InitSetup(ctx context.Context) (string, error) {
 
 	// Check if setup is already complete
 	complete, err := s.db.IsSetupComplete(ctx)
