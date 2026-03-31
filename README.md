@@ -125,8 +125,8 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Browser-based file manager (list, download, upload, delete, rename, mkdir, preview) | spec-only | CWP, Frontend |
-| File transfer over HTTPS/QUIC — no SFTP dependency | spec-only | CWP |
+| Browser-based file manager (list, download, upload, delete, rename, mkdir, preview) | in-progress | CWP, Frontend |
+| File transfer over HTTPS/QUIC — no SFTP dependency | done | CWP |
 | Resumable file uploads | spec-only | CWP |
 
 ### CLI & TUI
@@ -154,10 +154,10 @@ Status: `spec-only` | `in-progress` | `done`
 |---------|--------|--------------|
 | Audit logging for all access events | done | DB |
 | Audit log viewer in dashboard (search, filter, query) | spec-only | Frontend, DB |
-| Webhooks on audit events (HMAC-SHA256 signed, HTTPS-only in prod) | spec-only | DB |
+| Webhooks on audit events (HMAC-SHA256 signed, HTTPS-only in prod) | done | DB |
 | Webhook subscription management (create, update, delete, test) | done | DB |
-| Webhook delivery history with retry tracking | spec-only | DB |
-| Dev mode: webhook delivery to `http://localhost` loopback | spec-only | Webhooks |
+| Webhook delivery history with retry tracking | done | DB |
+| Dev mode: webhook delivery to `http://localhost` loopback | done | Webhooks |
 | NIST SP 800-53 Rev. 5 control coverage | spec-only | All |
 | NIST SP 800-131A cryptographic compliance | spec-only | All |
 | Security audit readiness (SOC 2 Type II, penetration test ready) | spec-only | All |

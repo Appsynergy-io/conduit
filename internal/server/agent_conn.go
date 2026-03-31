@@ -261,17 +261,15 @@ func (s *Server) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Publish connect event
-	if s.eventBus != nil {
-		s.eventBus.Publish(agent.TenantID, Event{
-			Channel: "agents",
-			Type:    "agent.connected",
-			Data: map[string]string{
-				"agentId":   agent.ID,
-				"hostname":  helloPayload.Hostname,
-				"transport": "websocket",
-			},
-		})
-	}
+	s.publishEvent(ctx, agent.TenantID, Event{
+		Channel: "agents",
+		Type:    "agent.connected",
+		Data: map[string]string{
+			"agentId":   agent.ID,
+			"hostname":  helloPayload.Hostname,
+			"transport": "websocket",
+		},
+	})
 
 	// Run the agent connection loop — handles PING/PONG and routes frames
 	s.runAgentLoop(ctx, connAgent, readErr)
@@ -292,16 +290,14 @@ func (s *Server) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 		Outcome:       "success",
 	})
 
-	if s.eventBus != nil {
-		s.eventBus.Publish(agent.TenantID, Event{
-			Channel: "agents",
-			Type:    "agent.disconnected",
-			Data: map[string]string{
-				"agentId":  agent.ID,
-				"hostname": agent.Hostname,
-			},
-		})
-	}
+	s.publishEvent(ctx, agent.TenantID, Event{
+		Channel: "agents",
+		Type:    "agent.disconnected",
+		Data: map[string]string{
+			"agentId":  agent.ID,
+			"hostname": agent.Hostname,
+		},
+	})
 }
 
 // runAgentLoop processes frames from a connected agent until disconnect.

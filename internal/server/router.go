@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -135,17 +136,15 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 		Outcome:       "success",
 	})
 
-	if s.eventBus != nil {
-		s.eventBus.Publish(claims.TenantID, Event{
-			Channel: "shell",
-			Type:    "shell.start",
-			Data: map[string]string{
-				"sessionId": sessionID,
-				"agentId":   agentID,
-				"userId":    claims.Subject,
-			},
-		})
-	}
+	s.publishEvent(ctx, claims.TenantID, Event{
+		Channel: "shell",
+		Type:    "shell.start",
+		Data: map[string]string{
+			"sessionId": sessionID,
+			"agentId":   agentID,
+			"userId":    claims.Subject,
+		},
+	})
 
 	s.logger.Info("shell session started",
 		"session_id", sessionID,
@@ -156,7 +155,7 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	// Bridge: browser ↔ agent
 	done := make(chan struct{})
 
-	// Browser → Agent: read from browser, send as SHELL_DATA to agent
+	// Browser → Agent: read from browser, send as SHELL_DATA or SHELL_RESIZE to agent
 	go func() {
 		defer func() {
 			select {
@@ -169,6 +168,16 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
+
+			// Check if this is a resize command (JSON with "type":"resize")
+			if f := parseBrowserResize(data, streamID); f != nil {
+				if err := connAgent.Mux.Send(ctx, f); err != nil {
+					return
+				}
+				continue
+			}
+
+			// Regular terminal data
 			f := &protocol.Frame{
 				Type:     protocol.FrameShellData,
 				StreamID: streamID,
@@ -235,14 +244,47 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 		Outcome:       "success",
 	})
 
-	if s.eventBus != nil {
-		s.eventBus.Publish(claims.TenantID, Event{
-			Channel: "shell",
-			Type:    "shell.end",
-			Data: map[string]string{
-				"sessionId": sessionID,
-				"agentId":   agentID,
-			},
-		})
+	s.publishEvent(ctx, claims.TenantID, Event{
+		Channel: "shell",
+		Type:    "shell.end",
+		Data: map[string]string{
+			"sessionId": sessionID,
+			"agentId":   agentID,
+		},
+	})
+}
+
+// browserResizeMsg is the JSON structure sent by the browser for terminal resize.
+type browserResizeMsg struct {
+	Type string `json:"type"`
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+}
+
+// parseBrowserResize checks if a browser WebSocket message is a resize command.
+// Returns a SHELL_RESIZE frame if it is, nil otherwise.
+func parseBrowserResize(data []byte, streamID uint32) *protocol.Frame {
+	// Quick check — resize messages are JSON starting with '{'
+	if len(data) == 0 || data[0] != '{' {
+		return nil
 	}
+
+	var msg browserResizeMsg
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return nil
+	}
+
+	if msg.Type != "resize" || msg.Cols <= 0 || msg.Rows <= 0 {
+		return nil
+	}
+
+	payload := protocol.ShellResizePayload{
+		Cols: msg.Cols,
+		Rows: msg.Rows,
+	}
+	f, err := protocol.NewFrame(protocol.FrameShellResize, streamID, payload)
+	if err != nil {
+		return nil
+	}
+	return f
 }

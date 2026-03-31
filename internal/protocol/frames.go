@@ -32,8 +32,11 @@ const (
 	// File frames
 	FrameFileList    FrameType = 0x20 // Both: directory listing req/resp
 	FrameFileRead    FrameType = 0x21 // Both: file content req/resp
-	FrameFileWrite   FrameType = 0x22 // Server → Agent: write file
+	FrameFileWrite   FrameType = 0x22 // Both: write file req/resp
 	FrameFileStat    FrameType = 0x23 // Both: file metadata req/resp
+	FrameFileDelete  FrameType = 0x24 // Both: delete file/dir req/resp
+	FrameFileRename  FrameType = 0x25 // Both: rename/move req/resp
+	FrameFileMkdir   FrameType = 0x26 // Both: create directory req/resp
 
 	// Agent info
 	FrameAgentInfo   FrameType = 0x30 // Agent → Server: system metrics
@@ -88,6 +91,12 @@ func (ft FrameType) String() string {
 		return "FILE_WRITE"
 	case FrameFileStat:
 		return "FILE_STAT"
+	case FrameFileDelete:
+		return "FILE_DELETE"
+	case FrameFileRename:
+		return "FILE_RENAME"
+	case FrameFileMkdir:
+		return "FILE_MKDIR"
 	case FrameAgentInfo:
 		return "AGENT_INFO"
 	case FrameExecStart:

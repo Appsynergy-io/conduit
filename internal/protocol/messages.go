@@ -55,6 +55,119 @@ type ExecExitPayload struct {
 	ExitCode int    `json:"exitCode"`
 }
 
+// FileListRequest is sent by the server to request a directory listing.
+type FileListRequest struct {
+	Path       string `json:"path"`
+	ShowHidden bool   `json:"showHidden,omitempty"`
+}
+
+// FileEntry represents a single file or directory in a listing.
+type FileEntry struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"` // "file", "directory", "symlink"
+	Size       int64  `json:"size"`
+	Permissions string `json:"permissions,omitempty"` // e.g. "-rw-r--r--"
+	Owner      string `json:"owner,omitempty"`
+	Group      string `json:"group,omitempty"`
+	ModifiedAt string `json:"modifiedAt"`
+	IsHidden   bool   `json:"isHidden,omitempty"`
+}
+
+// FileListResponse is the response to a FILE_LIST request.
+type FileListResponse struct {
+	Path    string      `json:"path"`
+	Entries []FileEntry `json:"entries"`
+	Error   string      `json:"error,omitempty"`
+}
+
+// FileReadRequest is sent by the server to read a file.
+type FileReadRequest struct {
+	Path     string `json:"path"`
+	MaxBytes int64  `json:"maxBytes,omitempty"` // 0 = entire file
+	Offset   int64  `json:"offset,omitempty"`
+}
+
+// FileReadResponse is the metadata response for a FILE_READ.
+// Actual file content follows as raw payload bytes in subsequent frames on the same stream,
+// or is included inline for small files.
+type FileReadResponse struct {
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	MimeType  string `json:"mimeType,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Content   string `json:"content,omitempty"` // base64 for binary, raw UTF-8 for text
+	Error     string `json:"error,omitempty"`
+}
+
+// FileWriteRequest is sent by the server to write a file.
+type FileWriteRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"` // base64-encoded file content
+	Mode    string `json:"mode,omitempty"` // e.g. "0644", defaults to 0644
+}
+
+// FileWriteResponse is the response to a FILE_WRITE.
+type FileWriteResponse struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Checksum string `json:"checksum,omitempty"` // SHA-256
+	Error    string `json:"error,omitempty"`
+}
+
+// FileStatRequest requests metadata about a file or directory.
+type FileStatRequest struct {
+	Path string `json:"path"`
+}
+
+// FileStatResponse is the response to a FILE_STAT request.
+type FileStatResponse struct {
+	Path        string `json:"path"`
+	Type        string `json:"type"` // "file", "directory", "symlink"
+	Size        int64  `json:"size"`
+	Permissions string `json:"permissions,omitempty"`
+	Owner       string `json:"owner,omitempty"`
+	Group       string `json:"group,omitempty"`
+	ModifiedAt  string `json:"modifiedAt"`
+	Error       string `json:"error,omitempty"`
+}
+
+// FileDeleteRequest is sent by the server to delete a file or directory.
+type FileDeleteRequest struct {
+	Path      string `json:"path"`
+	Recursive bool   `json:"recursive,omitempty"`
+}
+
+// FileDeleteResponse is the response to a FILE_DELETE.
+type FileDeleteResponse struct {
+	Path  string `json:"path"`
+	Error string `json:"error,omitempty"`
+}
+
+// FileRenameRequest is sent by the server to rename/move a file.
+type FileRenameRequest struct {
+	OldPath string `json:"oldPath"`
+	NewPath string `json:"newPath"`
+}
+
+// FileRenameResponse is the response to a rename operation.
+type FileRenameResponse struct {
+	OldPath string `json:"oldPath"`
+	NewPath string `json:"newPath"`
+	Error   string `json:"error,omitempty"`
+}
+
+// FileMkdirRequest is sent by the server to create a directory.
+type FileMkdirRequest struct {
+	Path    string `json:"path"`
+	Parents bool   `json:"parents,omitempty"` // mkdir -p
+}
+
+// FileMkdirResponse is the response to a mkdir operation.
+type FileMkdirResponse struct {
+	Path  string `json:"path"`
+	Error string `json:"error,omitempty"`
+}
+
 // AgentInfoPayload carries system metrics from the agent.
 type AgentInfoPayload struct {
 	CPUPercent  float64 `json:"cpuPercent"`
