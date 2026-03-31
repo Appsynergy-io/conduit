@@ -70,7 +70,7 @@ Status: `spec-only` | `in-progress` | `done`
 | X25519MLKEM768 hybrid PQC TLS on all connections | spec-only | — |
 | SQLite database (pure Go, `modernc.org/sqlite`) with AES-256-GCM on sensitive fields | done | — |
 | Embedded static frontend via `embed.FS` | done | Frontend |
-| First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey) | spec-only | Auth, DB |
+| First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey) | done | Auth, DB |
 | WebSocket EventBus for real-time dashboard updates | spec-only | HTTP server |
 | `server.yaml` configuration file | done | — |
 | Input validation middleware — unknown JSON fields rejected | done | Router |
@@ -81,7 +81,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
 | WebAuthn passkey registration + login (sole production auth) | spec-only | DB, Users |
-| Dev-mode password fallback (Argon2id hashed) | spec-only | DB, Users |
+| Dev-mode password fallback (Argon2id hashed) | done | DB, Users |
 | JWT issuance and validation (Ed25519 signed, short-lived) | done | — |
 | Users + groups + RBAC (platform_owner, org_owner, org_admin, org_member) | done | DB |
 | Account recovery via one-time recovery codes (Argon2id hashed, single-use) | spec-only | Auth, Users, Passkeys |
