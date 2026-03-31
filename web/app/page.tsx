@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "next/link"
 
 export default function Home() {
   return (
@@ -26,9 +26,8 @@ export default function Home() {
             Secure remote access to every machine
           </h1>
           <p className="mt-6 text-lg leading-8 text-muted-foreground">
-            No SSH keys. No VPNs. No inbound ports. Conduit gives you instant
-            shell access, file management, and fleet visibility through a single
-            self-hosted binary.
+            No SSH keys. No VPNs. No inbound ports. Conduit gives you instant shell access, file
+            management, and fleet visibility through a single self-hosted binary.
           </p>
           <div className="mt-10 flex items-center justify-center gap-x-6">
             <Link
@@ -80,20 +79,14 @@ export default function Home() {
         Conduit Community Edition
       </footer>
     </div>
-  );
+  )
 }
 
-function FeatureCard({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+function FeatureCard({ title, description }: { title: string; description: string }) {
   return (
     <div className="rounded-xl border border-border bg-card p-6">
       <h3 className="font-semibold">{title}</h3>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
     </div>
-  );
+  )
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/appsynergy-io/conduit/internal/middleware"
 	"github.com/appsynergy-io/conduit/internal/server"
 )
 
@@ -62,11 +63,16 @@ func TestEventStream_ValidToken(t *testing.T) {
 	token, err := jwtMgr.IssueAccessToken("user-1", "tenant-1", "sess-1", []string{"org_admin"}, nil)
 	require.NoError(t, err)
 
-	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream?token=" + token
+	// Use httpOnly cookie for authentication (no token in URL query params)
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	conn, resp, err := websocket.Dial(ctx, url, nil)
+	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Cookie": []string{middleware.AuthCookieName + "=" + token},
+		},
+	})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	defer conn.Close(websocket.StatusNormalClosure, "")

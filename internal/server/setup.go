@@ -147,13 +147,13 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 	// Create admin user
 	userID := uuid.NewString()
 	user := &db.User{
-		ID:       userID,
-		TenantID: tenantID,
-		Email:    req.AdminEmail,
+		ID:        userID,
+		TenantID:  tenantID,
+		Email:     req.AdminEmail,
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
-		Role:     "platform_owner",
-		Status:   "active",
+		Role:      "platform_owner",
+		Status:    "active",
 	}
 
 	// In dev mode, hash the setup token as the password

@@ -8,20 +8,38 @@ import (
 	"github.com/appsynergy-io/conduit/internal/auth"
 )
 
-// Auth validates the JWT from the Authorization header and injects claims into context.
+// AuthCookieName is the httpOnly cookie used for browser-based authentication.
+// Uses __Host- prefix for strict cookie security (OWASP V3, NIST SC-23).
+const AuthCookieName = "__Host-conduit_token"
+
+// ExtractToken retrieves a bearer token from the Authorization header first,
+// then falls back to the httpOnly auth cookie. Returns empty string if neither
+// is present (NIST IA-2, OWASP A07).
+func ExtractToken(r *http.Request) string {
+	// Check Authorization header first
+	if header := r.Header.Get("Authorization"); header != "" {
+		if token, found := strings.CutPrefix(header, "Bearer "); found && token != "" {
+			return token
+		}
+	}
+
+	// Fall back to httpOnly cookie
+	if cookie, err := r.Cookie(AuthCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
+
+	return ""
+}
+
+// Auth validates the JWT from the Authorization header or httpOnly cookie
+// and injects claims into context.
 // Returns 401 for missing/invalid tokens (NIST IA-2, OWASP A07, API2).
 func Auth(jwtMgr *auth.JWTManager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			header := r.Header.Get("Authorization")
-			if header == "" {
-				apierror.Unauthorized(w, r, "Missing authorization header.", nil)
-				return
-			}
-
-			token, found := strings.CutPrefix(header, "Bearer ")
-			if !found || token == "" {
-				apierror.Unauthorized(w, r, "Invalid authorization header format.", nil)
+			token := ExtractToken(r)
+			if token == "" {
+				apierror.Unauthorized(w, r, "Missing authentication credentials.", nil)
 				return
 			}
 

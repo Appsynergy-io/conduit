@@ -40,10 +40,9 @@ vi.mock("@xterm/addon-fit", () => {
 
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}))
 
-// Mock useAuth
-const mockToken = "test-jwt-token"
+// Mock useAuth — cookie-based auth, no token in JS
 vi.mock("@/hooks/use-auth", () => ({
-  useAuth: () => ({ token: mockToken, isAuthenticated: true }),
+  useAuth: () => ({ isAuthenticated: true, loading: false }),
 }))
 
 // Track WebSocket instances created
@@ -155,9 +154,9 @@ describe("TerminalView", () => {
     })
 
     const ws = mockWebSocketInstances[0]
-    // Verify URL structure — token in query param, agentId in path, subprotocol set
+    // Verify URL structure — no token in query param, agentId in path, subprotocol set
     expect(ws.url).toContain("/api/v1/shell/agent-123")
-    expect(ws.url).toContain("token=test-jwt-token")
+    expect(ws.url).not.toContain("token=")
     expect(ws.url).toContain("cols=80")
     expect(ws.url).toContain("rows=24")
     expect(ws.protocols).toBe("conduit-shell-v1")
@@ -312,7 +311,7 @@ describe("TerminalView — Security", () => {
     expect(ws.url).not.toContain("../../etc/passwd?")
   })
 
-  it("encodes token in query parameter", async () => {
+  it("does not include token in WebSocket URL (cookie-based auth)", async () => {
     render(<TerminalView agentId="agent-1" />)
 
     await vi.waitFor(() => {
@@ -320,8 +319,8 @@ describe("TerminalView — Security", () => {
     })
 
     const ws = mockWebSocketInstances[0]
-    // Token must be URL-encoded
-    expect(ws.url).toContain(`token=${encodeURIComponent(mockToken)}`)
+    // No token in URL — auth is via httpOnly cookie
+    expect(ws.url).not.toContain("token=")
   })
 
   it("uses binary WebSocket type to prevent XSS in terminal output", async () => {

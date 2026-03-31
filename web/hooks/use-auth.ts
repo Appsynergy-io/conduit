@@ -1,55 +1,76 @@
-"use client";
+"use client"
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react"
 
 interface AuthState {
-  token: string | null;
-  tenantId: string | null;
-  userId: string | null;
-  roles: string[];
-  isAuthenticated: boolean;
+  userId: string | null
+  tenantId: string | null
+  roles: string[]
+  isAuthenticated: boolean
+  loading: boolean
 }
 
-const STORAGE_KEY = "conduit_auth";
-
-function loadAuth(): AuthState {
-  if (typeof window === "undefined") {
-    return { token: null, tenantId: null, userId: null, roles: [], isAuthenticated: false };
-  }
-  try {
-    const stored = sessionStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return { ...parsed, isAuthenticated: !!parsed.token };
-    }
-  } catch {
-    // Corrupted storage — clear it
-    sessionStorage.removeItem(STORAGE_KEY);
-  }
-  return { token: null, tenantId: null, userId: null, roles: [], isAuthenticated: false };
+const initialState: AuthState = {
+  userId: null,
+  tenantId: null,
+  roles: [],
+  isAuthenticated: false,
+  loading: true,
 }
 
 export function useAuth() {
-  const [auth, setAuth] = useState<AuthState>(loadAuth);
+  const [auth, setAuth] = useState<AuthState>(initialState)
 
-  // Re-sync from storage on mount (handles multiple tabs)
+  // On mount, check if we have a valid session cookie
   useEffect(() => {
-    setAuth(loadAuth());
-  }, []);
+    let cancelled = false
+    async function checkSession() {
+      try {
+        const res = await fetch("/api/v1/auth/me")
+        if (res.ok) {
+          const data = await res.json()
+          if (!cancelled) {
+            setAuth({
+              userId: data.userId,
+              tenantId: data.tenantId,
+              roles: data.roles ?? [],
+              isAuthenticated: true,
+              loading: false,
+            })
+          }
+          return
+        }
+      } catch {
+        // Server unreachable — not authenticated
+      }
+      if (!cancelled) {
+        setAuth({ ...initialState, loading: false })
+      }
+    }
+    checkSession()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
-  const login = useCallback(
-    (token: string, tenantId: string, userId: string, roles: string[]) => {
-      const state: AuthState = { token, tenantId, userId, roles, isAuthenticated: true };
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      setAuth(state);
-    },
-    [],
-  );
+  const login = useCallback((userId: string, tenantId: string, roles: string[]) => {
+    setAuth({
+      userId,
+      tenantId,
+      roles,
+      isAuthenticated: true,
+      loading: false,
+    })
+  }, [])
 
-  const logout = useCallback(() => {
-    sessionStorage.removeItem(STORAGE_KEY);
-    setAuth({ token: null, tenantId: null, userId: null, roles: [], isAuthenticated: false });
-  }, []);
+  const logout = useCallback(async () => {
+    try {
+      await fetch("/api/v1/auth/logout", { method: "POST" })
+    } catch {
+      // Best-effort — clear local state regardless
+    }
+    setAuth({ ...initialState, loading: false })
+  }, [])
 
-  return { ...auth, login, logout };
+  return { ...auth, login, logout }
 }

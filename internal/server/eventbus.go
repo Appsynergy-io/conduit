@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/appsynergy-io/conduit/internal/middleware"
 )
 
 // EventBus manages WebSocket connections for real-time event delivery.
@@ -108,15 +110,8 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate via query param token (WebSocket upgrade can't use Authorization header)
-	tokenStr := r.URL.Query().Get("token")
-	if tokenStr == "" {
-		// Also check Authorization header for non-browser clients
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenStr = authHeader[7:]
-		}
-	}
+	// Authenticate via Authorization header or httpOnly cookie (NIST IA-2, OWASP A07)
+	tokenStr := middleware.ExtractToken(r)
 	if tokenStr == "" {
 		http.Error(w, "Missing authentication token", http.StatusUnauthorized)
 		return

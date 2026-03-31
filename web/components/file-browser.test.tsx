@@ -4,9 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { FileBrowser } from "./file-browser"
 
 // Mock useAuth
-const mockToken = "test-jwt-token"
 vi.mock("@/hooks/use-auth", () => ({
-  useAuth: () => ({ token: mockToken, isAuthenticated: true }),
+  useAuth: () => ({ isAuthenticated: true, loading: false }),
 }))
 
 // Mock Radix DropdownMenu — jsdom doesn't support pointer events that Radix requires
@@ -463,7 +462,7 @@ describe("FileBrowser — Security", () => {
     expect(url).not.toContain("../../etc/passwd/files")
   })
 
-  it("sends auth token in Authorization header", async () => {
+  it("does not send Authorization header (cookie-based auth)", async () => {
     const fetchMock = mockFetchSuccess({ path: "/", entries: [] })
     vi.stubGlobal("fetch", fetchMock)
 
@@ -473,8 +472,9 @@ describe("FileBrowser — Security", () => {
       expect(fetchMock).toHaveBeenCalled()
     })
 
-    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>
-    expect(headers.Authorization).toBe("Bearer test-jwt-token")
+    const options = fetchMock.mock.calls[0][1] as RequestInit | undefined
+    const headers = (options?.headers ?? {}) as Record<string, string>
+    expect(headers.Authorization).toBeUndefined()
   })
 
   it("uses POST for destructive operations (delete)", async () => {

@@ -1,4 +1,4 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
   output: "export",
@@ -7,6 +7,6 @@ const nextConfig: NextConfig = {
   },
   // Disable trailing slashes for cleaner embed.FS serving
   trailingSlash: false,
-};
+}
 
-export default nextConfig;
+export default nextConfig

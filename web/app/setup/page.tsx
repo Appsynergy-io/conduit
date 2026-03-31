@@ -1,38 +1,32 @@
-"use client";
+"use client"
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, CheckCircle2 } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { useState } from "react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
-type Step = "token" | "configure" | "complete";
+type Step = "token" | "configure" | "complete"
 
 export default function SetupPage() {
-  const router = useRouter();
-  const [step, setStep] = useState<Step>("token");
-  const [setupToken, setSetupToken] = useState("");
-  const [domain, setDomain] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [orgName, setOrgName] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const router = useRouter()
+  const [step, setStep] = useState<Step>("token")
+  const [setupToken, setSetupToken] = useState("")
+  const [domain, setDomain] = useState("")
+  const [adminEmail, setAdminEmail] = useState("")
+  const [orgName, setOrgName] = useState("")
+  const [firstName, setFirstName] = useState("")
+  const [lastName, setLastName] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   async function handleConfigure(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
 
     try {
       const res = await fetch("/api/v1/setup/configure", {
@@ -46,12 +40,12 @@ export default function SetupPage() {
           firstName,
           lastName,
         }),
-      });
+      })
 
       if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        setError(body?.detail ?? "Setup failed.");
-        return;
+        const body = await res.json().catch(() => null)
+        setError(body?.detail ?? "Setup failed.")
+        return
       }
 
       // Complete passkey step (dev mode skips actual passkey)
@@ -59,19 +53,19 @@ export default function SetupPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ setupToken }),
-      });
+      })
 
       if (!passkeyRes.ok) {
-        const body = await passkeyRes.json().catch(() => null);
-        setError(body?.detail ?? "Passkey setup failed.");
-        return;
+        const body = await passkeyRes.json().catch(() => null)
+        setError(body?.detail ?? "Passkey setup failed.")
+        return
       }
 
-      setStep("complete");
+      setStep("complete")
     } catch {
-      setError("Unable to reach the server.");
+      setError("Unable to reach the server.")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
@@ -87,25 +81,20 @@ export default function SetupPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button
-              className="w-full"
-              onClick={() => router.push("/login")}
-            >
+            <Button className="w-full" onClick={() => router.push("/login")}>
               Go to Login
             </Button>
           </CardContent>
         </Card>
       </div>
-    );
+    )
   }
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold tracking-tight">
-            Conduit Setup
-          </CardTitle>
+          <CardTitle className="text-2xl font-bold tracking-tight">Conduit Setup</CardTitle>
           <CardDescription>
             {step === "token"
               ? "Enter the setup token printed in the server console."
@@ -135,8 +124,8 @@ export default function SetupPage() {
                 className="w-full"
                 disabled={!setupToken}
                 onClick={() => {
-                  setError(null);
-                  setStep("configure");
+                  setError(null)
+                  setStep("configure")
                 }}
               >
                 Continue
@@ -209,5 +198,5 @@ export default function SetupPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }
