@@ -67,16 +67,23 @@ func TestWebhookDelivery_Success(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	wd := NewWebhookDeliverer(database, logger)
+	wd.skipSSRF = true // httptest binds to 127.0.0.1
 	wd.Start(ctx)
 	defer wd.Stop()
 
-	// Enqueue an event
-	wd.Enqueue(ctx, testTenantID, "agent.connected", map[string]string{
-		"agentId": "agent-123",
-	})
-
-	// Wait for delivery
-	time.Sleep(500 * time.Millisecond)
+	// Deliver directly to test the delivery path
+	work := webhookWork{
+		sub: *sub,
+		payload: WebhookPayload{
+			ID:        uuid.NewString(),
+			EventType: "agent.connected",
+			TenantID:  testTenantID,
+			Timestamp: db.Now(),
+			Data:      map[string]string{"agentId": "agent-123"},
+		},
+		attempt: 1,
+	}
+	wd.deliver(ctx, work)
 
 	assert.Equal(t, int32(1), callCount.Load())
 	assert.Equal(t, "agent.connected", receivedEvent)
@@ -125,14 +132,26 @@ func TestWebhookDelivery_Retry(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	wd := NewWebhookDeliverer(database, logger)
-	// Override the client timeout for faster test
+	wd.skipSSRF = true // httptest binds to 127.0.0.1
 	wd.client.Timeout = 2 * time.Second
 	wd.Start(ctx)
 	defer wd.Stop()
 
-	wd.Enqueue(ctx, testTenantID, "agent.connected", map[string]string{"agentId": "a"})
+	// Push work directly to the queue to test retry logic
+	work := webhookWork{
+		sub: *sub,
+		payload: WebhookPayload{
+			ID:        uuid.NewString(),
+			EventType: "agent.connected",
+			TenantID:  testTenantID,
+			Timestamp: db.Now(),
+			Data:      map[string]string{"agentId": "a"},
+		},
+		attempt: 1,
+	}
+	wd.queue <- work
 
-	// Wait for retries (with fast retry in test)
+	// Wait for retries (with exponential backoff)
 	time.Sleep(15 * time.Second)
 
 	// Should have been called at least 2 times (first attempt + retries)

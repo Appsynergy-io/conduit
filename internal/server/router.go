@@ -61,7 +61,7 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse terminal size
+	// Parse terminal size with bounds enforcement (OWASP API4)
 	cols := 80
 	rows := 24
 	if c := r.URL.Query().Get("cols"); c != "" {
@@ -69,6 +69,12 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if ro := r.URL.Query().Get("rows"); ro != "" {
 		fmt.Sscanf(ro, "%d", &rows)
+	}
+	if cols <= 0 || cols > 500 {
+		cols = 80
+	}
+	if rows <= 0 || rows > 500 {
+		rows = 24
 	}
 
 	// Upgrade browser connection to WebSocket
@@ -275,6 +281,11 @@ func parseBrowserResize(data []byte, streamID uint32) *protocol.Frame {
 	}
 
 	if msg.Type != "resize" || msg.Cols <= 0 || msg.Rows <= 0 {
+		return nil
+	}
+
+	// Enforce sane terminal bounds (OWASP API4)
+	if msg.Cols > 500 || msg.Rows > 500 {
 		return nil
 	}
 

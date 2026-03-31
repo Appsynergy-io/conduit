@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -45,12 +47,13 @@ type webhookWork struct {
 // WebhookDeliverer delivers webhook events to subscribers asynchronously.
 // It maintains a background worker that processes delivery jobs from a queue.
 type WebhookDeliverer struct {
-	database *db.DB
-	logger   *slog.Logger
-	client   *http.Client
-	queue    chan webhookWork
-	wg       sync.WaitGroup
-	cancel   context.CancelFunc
+	database    *db.DB
+	logger      *slog.Logger
+	client      *http.Client
+	queue       chan webhookWork
+	wg          sync.WaitGroup
+	cancel      context.CancelFunc
+	skipSSRF    bool // For testing only — disables SSRF validation
 }
 
 // NewWebhookDeliverer creates a webhook delivery engine.
@@ -85,7 +88,6 @@ func (wd *WebhookDeliverer) Stop() {
 	if wd.cancel != nil {
 		wd.cancel()
 	}
-	close(wd.queue)
 	wd.wg.Wait()
 }
 
@@ -160,6 +162,15 @@ func (wd *WebhookDeliverer) deliver(ctx context.Context, work webhookWork) {
 	if err != nil {
 		wd.logger.Error("failed to marshal webhook payload", "error", err)
 		return
+	}
+
+	// SSRF check: block private/internal IPs (OWASP A10, API7)
+	if !wd.skipSSRF {
+		if err := validateWebhookURL(work.sub.URL); err != nil {
+			wd.logger.Warn("webhook SSRF blocked", "error", err, "url", work.sub.URL)
+			wd.recordDelivery(ctx, work, "failed", nil, 0)
+			return
+		}
 	}
 
 	// Sign the payload with HMAC-SHA256
@@ -237,6 +248,16 @@ func (wd *WebhookDeliverer) maybeRetry(work webhookWork) {
 	work.attempt++
 	work.retryAt = time.Now().Add(delay)
 
+	// Recover from send on closed channel during shutdown
+	defer func() {
+		if r := recover(); r != nil {
+			wd.logger.Warn("webhook retry dropped during shutdown",
+				"event", work.payload.EventType,
+				"subscription_id", work.sub.ID,
+			)
+		}
+	}()
+
 	select {
 	case wd.queue <- work:
 	default:
@@ -269,6 +290,70 @@ func (wd *WebhookDeliverer) recordDelivery(ctx context.Context, work webhookWork
 	if err := wd.database.CreateWebhookDelivery(ctx, delivery); err != nil {
 		wd.logger.Error("failed to record webhook delivery", "error", err)
 	}
+}
+
+// isPrivateOrReservedIP checks if an IP is in a private, loopback, link-local,
+// or cloud metadata range (OWASP A10, API7 — SSRF prevention).
+func isPrivateOrReservedIP(ip net.IP) bool {
+	// Cloud metadata endpoint (169.254.169.254)
+	if ip.Equal(net.ParseIP("169.254.169.254")) {
+		return true
+	}
+
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"169.254.0.0/16", // Link-local
+		"::1/128",        // IPv6 loopback
+		"fc00::/7",       // IPv6 ULA
+		"fe80::/10",      // IPv6 link-local
+	}
+
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateWebhookURL checks that the URL does not target private/internal IPs (SSRF).
+// Returns an error if the URL resolves to a private address.
+func validateWebhookURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	host := parsed.Hostname()
+
+	// Direct IP check
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateOrReservedIP(ip) {
+			return fmt.Errorf("webhook URL resolves to private/reserved IP: %s", ip)
+		}
+		return nil
+	}
+
+	// DNS resolution check
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("cannot resolve webhook host: %w", err)
+	}
+
+	for _, ip := range ips {
+		if isPrivateOrReservedIP(ip) {
+			return fmt.Errorf("webhook URL resolves to private/reserved IP: %s", ip)
+		}
+	}
+
+	return nil
 }
 
 // signPayload computes an HMAC-SHA256 signature for the webhook payload.
