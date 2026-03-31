@@ -68,6 +68,15 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFileOp(r, claims, agent, "file.listed", path)
 
+	s.publishEvent(r.Context(), claims.TenantID, Event{
+		Channel: "files",
+		Type:    "file.listed",
+		Data: map[string]string{
+			"agentId": agentID,
+			"path":    path,
+		},
+	})
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"path":    listResp.Path,
 		"entries": listResp.Entries,
@@ -121,6 +130,15 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditFileOp(r, claims, agent, "file.downloaded", path)
+
+	s.publishEvent(r.Context(), claims.TenantID, Event{
+		Channel: "files",
+		Type:    "file.downloaded",
+		Data: map[string]string{
+			"agentId": agentID,
+			"path":    path,
+		},
+	})
 
 	filename := filepath.Base(path)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
@@ -187,6 +205,15 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFileOp(r, claims, agent, "file.uploaded", path)
 
+	s.publishEvent(r.Context(), claims.TenantID, Event{
+		Channel: "files",
+		Type:    "file.uploaded",
+		Data: map[string]string{
+			"agentId": agentID,
+			"path":    path,
+		},
+	})
+
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"path":     writeResp.Path,
 		"size":     writeResp.Size,
@@ -244,6 +271,15 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFileOp(r, claims, agent, "file.deleted", body.Path)
 
+	s.publishEvent(r.Context(), claims.TenantID, Event{
+		Channel: "files",
+		Type:    "file.deleted",
+		Data: map[string]string{
+			"agentId": agentID,
+			"path":    body.Path,
+		},
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -297,6 +333,16 @@ func (s *Server) handleRenameFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditFileOp(r, claims, agent, "file.renamed", body.OldPath+" -> "+body.NewPath)
+
+	s.publishEvent(r.Context(), claims.TenantID, Event{
+		Channel: "files",
+		Type:    "file.renamed",
+		Data: map[string]string{
+			"agentId": agentID,
+			"oldPath": body.OldPath,
+			"newPath": body.NewPath,
+		},
+	})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"oldPath": renameResp.OldPath,
@@ -353,6 +399,15 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditFileOp(r, claims, agent, "file.mkdir", body.Path)
+
+	s.publishEvent(r.Context(), claims.TenantID, Event{
+		Channel: "files",
+		Type:    "file.mkdir",
+		Data: map[string]string{
+			"agentId": agentID,
+			"path":    body.Path,
+		},
+	})
 
 	w.WriteHeader(http.StatusCreated)
 }

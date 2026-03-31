@@ -124,6 +124,15 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		Outcome:   "success",
 	})
 
+	s.publishEvent(ctx, user.TenantID, Event{
+		Channel: "auth",
+		Type:    "auth.login",
+		Data: map[string]string{
+			"userId": user.ID,
+			"email":  user.Email,
+		},
+	})
+
 	// Set httpOnly cookie before writing the response body (NIST SC-23, OWASP V3)
 	setAuthCookie(w, accessToken, 900)
 
@@ -189,6 +198,17 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 // handleLogout clears the auth cookie and returns 204 No Content.
 // POST /api/v1/auth/logout
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	if claims != nil {
+		s.publishEvent(r.Context(), claims.TenantID, Event{
+			Channel: "auth",
+			Type:    "auth.logout",
+			Data: map[string]string{
+				"userId": claims.Subject,
+			},
+		})
+	}
+
 	clearAuthCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }

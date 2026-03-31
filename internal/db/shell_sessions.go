@@ -6,6 +6,98 @@ import (
 	"fmt"
 )
 
+// ShellRecording represents a row from the shell_recordings table.
+type ShellRecording struct {
+	ID            string
+	TenantID      string
+	SessionID     string
+	AgentID       string
+	UserID        string
+	AgentHostname string
+	UserEmail     string
+	Duration      int    // seconds
+	SizeBytes     int
+	Format        string // "asciicast-v2"
+	Data          []byte // the actual recording data
+	CreatedAt     string
+}
+
+// CreateShellRecording inserts a new shell recording record.
+func (d *DB) CreateShellRecording(ctx context.Context, rec *ShellRecording) error {
+	_, err := d.conn.ExecContext(ctx, `
+		INSERT INTO shell_recordings (id, tenant_id, session_id, agent_id, user_id, agent_hostname, user_email, duration, size_bytes, format, data, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.ID, d.tenantID, rec.SessionID, rec.AgentID, rec.UserID, rec.AgentHostname, rec.UserEmail, rec.Duration, rec.SizeBytes, rec.Format, rec.Data, Now(),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting shell recording: %w", err)
+	}
+	return nil
+}
+
+// GetShellRecording returns a shell recording by ID, including the data.
+func (d *DB) GetShellRecording(ctx context.Context, id string) (*ShellRecording, error) {
+	var rec ShellRecording
+	err := d.conn.QueryRowContext(ctx, `
+		SELECT id, tenant_id, session_id, agent_id, user_id, agent_hostname, user_email, duration, size_bytes, format, data, created_at
+		FROM shell_recordings WHERE id = ? AND tenant_id = ?`, id, d.tenantID,
+	).Scan(&rec.ID, &rec.TenantID, &rec.SessionID, &rec.AgentID, &rec.UserID, &rec.AgentHostname, &rec.UserEmail, &rec.Duration, &rec.SizeBytes, &rec.Format, &rec.Data, &rec.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying shell recording: %w", err)
+	}
+	return &rec, nil
+}
+
+// ListShellRecordings returns paginated shell recordings for the tenant.
+// If agentID is non-empty, results are filtered to that agent.
+// The data field is not populated in list results.
+// Returns the recordings and total count.
+func (d *DB) ListShellRecordings(ctx context.Context, agentID string, limit, offset int) ([]ShellRecording, int, error) {
+	// Count query
+	countQuery := `SELECT COUNT(*) FROM shell_recordings WHERE tenant_id = ?`
+	countArgs := []interface{}{d.tenantID}
+	if agentID != "" {
+		countQuery += ` AND agent_id = ?`
+		countArgs = append(countArgs, agentID)
+	}
+
+	var total int
+	if err := d.conn.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting shell recordings: %w", err)
+	}
+
+	// List query (no data field)
+	listQuery := `
+		SELECT id, tenant_id, session_id, agent_id, user_id, agent_hostname, user_email, duration, size_bytes, format, created_at
+		FROM shell_recordings WHERE tenant_id = ?`
+	listArgs := []interface{}{d.tenantID}
+	if agentID != "" {
+		listQuery += ` AND agent_id = ?`
+		listArgs = append(listArgs, agentID)
+	}
+	listQuery += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	listArgs = append(listArgs, limit, offset)
+
+	rows, err := d.conn.QueryContext(ctx, listQuery, listArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing shell recordings: %w", err)
+	}
+	defer rows.Close()
+
+	var recordings []ShellRecording
+	for rows.Next() {
+		var rec ShellRecording
+		if err := rows.Scan(&rec.ID, &rec.TenantID, &rec.SessionID, &rec.AgentID, &rec.UserID, &rec.AgentHostname, &rec.UserEmail, &rec.Duration, &rec.SizeBytes, &rec.Format, &rec.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scanning shell recording: %w", err)
+		}
+		recordings = append(recordings, rec)
+	}
+	return recordings, total, rows.Err()
+}
+
 // ShellSession represents a row from the shell_sessions table.
 type ShellSession struct {
 	ID        string
