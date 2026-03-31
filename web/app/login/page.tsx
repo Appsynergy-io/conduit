@@ -1,63 +1,50 @@
-"use client";
+"use client"
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { useState } from "react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { useAuth } from "@/hooks/use-auth"
 
 export default function LoginPage() {
-  const router = useRouter();
-  const { login } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const router = useRouter()
+  const { login } = useAuth()
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
 
     try {
       const res = await fetch("/api/v1/auth/password/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
-      });
+      })
 
       if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        setError(body?.detail ?? "Invalid email or password.");
-        return;
+        const body = await res.json().catch(() => null)
+        setError(body?.detail ?? "Invalid email or password.")
+        return
       }
 
-      const data = await res.json();
+      const data = await res.json()
 
-      // Decode JWT claims to extract user info
-      const payload = JSON.parse(atob(data.accessToken.split(".")[1]));
-      login(
-        data.accessToken,
-        payload.tid,
-        payload.sub,
-        payload.roles ?? [],
-      );
+      login(data.user.id, data.user.tenantId, data.user.roles ?? [])
 
-      router.push("/dashboard");
+      router.push("/dashboard")
     } catch {
-      setError("Unable to reach the server. Check your connection.");
+      setError("Unable to reach the server. Check your connection.")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
@@ -65,9 +52,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold tracking-tight">
-            Conduit
-          </CardTitle>
+          <CardTitle className="text-2xl font-bold tracking-tight">Conduit</CardTitle>
           <CardDescription>Sign in to your account</CardDescription>
         </CardHeader>
         <CardContent>
@@ -112,5 +97,5 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

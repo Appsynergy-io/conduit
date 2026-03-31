@@ -20,11 +20,11 @@ import (
 
 // Server holds the server state and dependencies.
 type Server struct {
-	cfg       *shared.Config
-	db        *db.DB
-	jwtMgr    *auth.JWTManager
-	router    chi.Router
-	logger    *slog.Logger
+	cfg           *shared.Config
+	db            *db.DB
+	jwtMgr        *auth.JWTManager
+	router        chi.Router
+	logger        *slog.Logger
 	httpSrv       *http.Server
 	tlsConfig     *tls.Config
 	eventBus      *EventBus
@@ -36,11 +36,11 @@ type Server struct {
 // New creates a Server with all dependencies wired.
 func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig *tls.Config, logger *slog.Logger, frontendFS fs.FS) *Server {
 	s := &Server{
-		cfg:       cfg,
-		db:        database,
-		jwtMgr:    jwtMgr,
-		logger:    logger,
-		tlsConfig: tlsConfig,
+		cfg:           cfg,
+		db:            database,
+		jwtMgr:        jwtMgr,
+		logger:        logger,
+		tlsConfig:     tlsConfig,
 		eventBus:      NewEventBus(logger),
 		agentRegistry: NewAgentRegistry(logger),
 		webhooks:      NewWebhookDeliverer(database, logger),
@@ -100,6 +100,10 @@ func (s *Server) buildRouter() chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(s.jwtMgr))
 			r.Use(middleware.NoCacheHeaders)
+
+			// Auth session management
+			r.Get("/auth/me", s.handleAuthMe)
+			r.Post("/auth/logout", s.handleLogout)
 
 			// Users
 			r.Get("/users", s.handleListUsers)
@@ -167,7 +171,7 @@ func (s *Server) Start(ctx context.Context) error {
 		TLSConfig:         s.tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		BaseContext:        func(_ net.Listener) context.Context { return ctx },
+		BaseContext:       func(_ net.Listener) context.Context { return ctx },
 	}
 
 	ln, err := net.Listen("tcp", s.cfg.Server.HTTPAddr)

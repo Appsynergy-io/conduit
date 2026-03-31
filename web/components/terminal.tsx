@@ -4,7 +4,6 @@ import { X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { useAuth } from "@/hooks/use-auth"
 
 type TerminalStatus = "connecting" | "connected" | "disconnected" | "error"
 
@@ -15,7 +14,6 @@ interface TerminalProps {
 }
 
 export function TerminalView({ agentId, agentHostname, onClose }: TerminalProps) {
-  const { token } = useAuth()
   const termRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null)
@@ -35,9 +33,8 @@ export function TerminalView({ agentId, agentHostname, onClose }: TerminalProps)
   }, [])
 
   useEffect(() => {
-    if (!token || !termRef.current) return
+    if (!termRef.current) return
 
-    const authToken = token
     const container = termRef.current
     let disposed = false
 
@@ -93,7 +90,7 @@ export function TerminalView({ agentId, agentHostname, onClose }: TerminalProps)
       // Build WebSocket URL — token passed as query param (server expects this)
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
       const { cols, rows } = term
-      const wsUrl = `${protocol}//${window.location.host}/api/v1/shell/${encodeURIComponent(agentId)}?token=${encodeURIComponent(authToken)}&cols=${cols}&rows=${rows}`
+      const wsUrl = `${protocol}//${window.location.host}/api/v1/shell/${encodeURIComponent(agentId)}?cols=${cols}&rows=${rows}`
 
       const ws = new WebSocket(wsUrl, "conduit-shell-v1")
       ws.binaryType = "arraybuffer"
@@ -185,7 +182,7 @@ export function TerminalView({ agentId, agentHostname, onClose }: TerminalProps)
       cleanupObserver?.()
       cleanup()
     }
-  }, [token, agentId, cleanup])
+  }, [agentId, cleanup])
 
   return (
     <div className="flex h-full flex-col" data-testid="terminal-view">

@@ -22,17 +22,15 @@ export interface Agent {
 }
 
 export default function DashboardPage() {
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const { subscribe } = useEventBus()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchAgents = useCallback(async () => {
-    if (!token) return
+    if (!isAuthenticated) return
     try {
-      const res = await fetch("/api/v1/agents", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await fetch("/api/v1/agents")
       if (res.ok) {
         const data = await res.json()
         setAgents(data.items ?? [])
@@ -40,7 +38,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [isAuthenticated])
 
   useEffect(() => {
     fetchAgents()

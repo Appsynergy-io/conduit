@@ -26,16 +26,14 @@ interface AuditEvent {
 }
 
 export default function AuditPage() {
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchEvents = useCallback(async () => {
-    if (!token) return
+    if (!isAuthenticated) return
     try {
-      const res = await fetch("/api/v1/audit/events?limit=50", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await fetch("/api/v1/audit/events?limit=50")
       if (res.ok) {
         const data = await res.json()
         setEvents(data.items ?? [])
@@ -43,7 +41,7 @@ export default function AuditPage() {
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [isAuthenticated])
 
   useEffect(() => {
     fetchEvents()

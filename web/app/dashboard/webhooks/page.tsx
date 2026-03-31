@@ -23,16 +23,14 @@ interface WebhookSub {
 }
 
 export default function WebhooksPage() {
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const [webhooks, setWebhooks] = useState<WebhookSub[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchWebhooks = useCallback(async () => {
-    if (!token) return
+    if (!isAuthenticated) return
     try {
-      const res = await fetch("/api/v1/webhooks", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await fetch("/api/v1/webhooks")
       if (res.ok) {
         const data = await res.json()
         setWebhooks(data.items ?? [])
@@ -40,7 +38,7 @@ export default function WebhooksPage() {
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [isAuthenticated])
 
   useEffect(() => {
     fetchWebhooks()

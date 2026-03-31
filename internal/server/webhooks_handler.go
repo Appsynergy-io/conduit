@@ -18,12 +18,12 @@ import (
 
 // webhookResponse is the API response shape for a webhook subscription.
 type webhookResponse struct {
-	ID        string           `json:"id"`
-	URL       string           `json:"url"`
-	Events    json.RawMessage  `json:"events"`
-	Enabled   bool             `json:"enabled"`
-	CreatedBy *string          `json:"createdBy,omitempty"`
-	CreatedAt string           `json:"createdAt"`
+	ID        string          `json:"id"`
+	URL       string          `json:"url"`
+	Events    json.RawMessage `json:"events"`
+	Enabled   bool            `json:"enabled"`
+	CreatedBy *string         `json:"createdBy,omitempty"`
+	CreatedAt string          `json:"createdAt"`
 }
 
 func toWebhookResponse(sub db.WebhookSubscription) webhookResponse {

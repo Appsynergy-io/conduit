@@ -146,7 +146,7 @@ function parentPath(path: string): string {
 // ── Component ────────────────────────────────────────
 
 export function FileBrowser({ agentId }: FileBrowserProps) {
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const [currentPath, setCurrentPath] = useState("/")
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -172,7 +172,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
 
   const fetchEntries = useCallback(
     async (path: string) => {
-      if (!token) return
+      if (!isAuthenticated) return
       setLoading(true)
       setError(null)
 
@@ -183,7 +183,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         })
         const res = await fetch(
           `/api/v1/agents/${encodeURIComponent(agentId)}/files?${params.toString()}`,
-          { headers: { Authorization: `Bearer ${token}` } },
         )
 
         if (!res.ok) {
@@ -208,7 +207,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         setLoading(false)
       }
     },
-    [token, agentId, showHidden],
+    [isAuthenticated, agentId, showHidden],
   )
 
   useEffect(() => {
@@ -234,12 +233,11 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
 
   const handleDownload = useCallback(
     async (entry: FileEntry) => {
-      if (!token) return
+      if (!isAuthenticated) return
       const filePath = joinPath(currentPath, entry.name)
       const params = new URLSearchParams({ path: filePath })
       const res = await fetch(
         `/api/v1/agents/${encodeURIComponent(agentId)}/files/download?${params.toString()}`,
-        { headers: { Authorization: `Bearer ${token}` } },
       )
 
       if (!res.ok) {
@@ -255,14 +253,14 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       a.click()
       URL.revokeObjectURL(url)
     },
-    [token, agentId, currentPath],
+    [isAuthenticated, agentId, currentPath],
   )
 
   // ── Upload ──
 
   const handleUpload = useCallback(
     async (file: globalThis.File) => {
-      if (!token) return
+      if (!isAuthenticated) return
       setActionLoading(true)
 
       try {
@@ -273,7 +271,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${token}`,
               "Content-Type": "application/octet-stream",
             },
             body: file,
@@ -293,7 +290,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         setActionLoading(false)
       }
     },
-    [token, agentId, currentPath, fetchEntries],
+    [isAuthenticated, agentId, currentPath, fetchEntries],
   )
 
   const onFileSelected = useCallback(
@@ -309,7 +306,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
   // ── Delete ──
 
   const handleDelete = useCallback(async () => {
-    if (!token || !deleteTarget) return
+    if (!isAuthenticated || !deleteTarget) return
     setActionLoading(true)
 
     try {
@@ -317,7 +314,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       const res = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/files/delete`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -340,12 +336,12 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
     } finally {
       setActionLoading(false)
     }
-  }, [token, agentId, currentPath, deleteTarget, fetchEntries])
+  }, [isAuthenticated, agentId, currentPath, deleteTarget, fetchEntries])
 
   // ── Rename ──
 
   const handleRename = useCallback(async () => {
-    if (!token || !renameTarget || !renameName.trim()) return
+    if (!isAuthenticated || !renameTarget || !renameName.trim()) return
     setActionLoading(true)
 
     try {
@@ -354,7 +350,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       const res = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/files/rename`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ oldPath, newPath }),
@@ -375,12 +370,12 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
     } finally {
       setActionLoading(false)
     }
-  }, [token, agentId, currentPath, renameTarget, renameName, fetchEntries])
+  }, [isAuthenticated, agentId, currentPath, renameTarget, renameName, fetchEntries])
 
   // ── Mkdir ──
 
   const handleMkdir = useCallback(async () => {
-    if (!token || !mkdirName.trim()) return
+    if (!isAuthenticated || !mkdirName.trim()) return
     setActionLoading(true)
 
     try {
@@ -388,7 +383,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       const res = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/files/mkdir`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ path: dirPath, parents: true }),
@@ -408,13 +402,13 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
     } finally {
       setActionLoading(false)
     }
-  }, [token, agentId, currentPath, mkdirName, fetchEntries])
+  }, [isAuthenticated, agentId, currentPath, mkdirName, fetchEntries])
 
   // ── Preview ──
 
   const handlePreview = useCallback(
     async (entry: FileEntry) => {
-      if (!token) return
+      if (!isAuthenticated) return
       setPreviewLoading(true)
       setPreviewOpen(true)
       setPreview(null)
@@ -424,7 +418,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         const params = new URLSearchParams({ path: filePath })
         const res = await fetch(
           `/api/v1/agents/${encodeURIComponent(agentId)}/files/preview?${params.toString()}`,
-          { headers: { Authorization: `Bearer ${token}` } },
         )
 
         if (!res.ok) {
@@ -442,7 +435,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         setPreviewLoading(false)
       }
     },
-    [token, agentId, currentPath],
+    [isAuthenticated, agentId, currentPath],
   )
 
   // ── Sort entries: directories first, then alphabetical ──

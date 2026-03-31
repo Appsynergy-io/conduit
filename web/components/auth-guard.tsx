@@ -1,22 +1,22 @@
-"use client";
+"use client"
 
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { useAuth } from "@/hooks/use-auth";
+import { useRouter } from "next/navigation"
+import { useEffect } from "react"
+import { useAuth } from "@/hooks/use-auth"
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
-  const router = useRouter();
+  const { isAuthenticated, loading } = useAuth()
+  const router = useRouter()
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.replace("/login");
+    if (!loading && !isAuthenticated) {
+      router.replace("/login")
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, loading, router])
 
-  if (!isAuthenticated) {
-    return null;
+  if (loading || !isAuthenticated) {
+    return null
   }
 
-  return <>{children}</>;
+  return <>{children}</>
 }

@@ -17,14 +17,14 @@ interface Agent {
 
 function FileBrowserContent() {
   const searchParams = useSearchParams()
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const agentId = searchParams.get("agent")
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!token || !agentId) {
+    if (!isAuthenticated || !agentId) {
       setLoading(false)
       return
     }
@@ -35,7 +35,6 @@ function FileBrowserContent() {
     async function fetchAgent() {
       try {
         const res = await fetch(`/api/v1/agents/${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         })
 
@@ -62,7 +61,7 @@ function FileBrowserContent() {
 
     fetchAgent()
     return () => controller.abort()
-  }, [token, agentId])
+  }, [isAuthenticated, agentId])
 
   if (!agentId) {
     return (
