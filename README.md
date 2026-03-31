@@ -71,7 +71,7 @@ Status: `spec-only` | `in-progress` | `done`
 | SQLite database (pure Go, `modernc.org/sqlite`) with AES-256-GCM on sensitive fields | done | — |
 | Embedded static frontend via `embed.FS` | done | Frontend |
 | First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey) | done | Auth, DB |
-| WebSocket EventBus for real-time dashboard updates | spec-only | HTTP server |
+| WebSocket EventBus for real-time dashboard updates | done | HTTP server |
 | `server.yaml` configuration file | done | — |
 | Input validation middleware — unknown JSON fields rejected | done | Router |
 | Parameterized queries only — no raw SQL interpolation | done | DB |
@@ -98,8 +98,8 @@ Status: `spec-only` | `in-progress` | `done`
 |---------|--------|--------------|
 | Agent outbound QUIC connection (primary) | spec-only | CWP |
 | Agent automatic WebSocket fallback (if QUIC/UDP blocked) | spec-only | CWP |
-| CWP wire protocol — identical binary framing over QUIC and WebSocket | spec-only | — |
-| Agent registration flow (single-use + persistent join tokens) | spec-only | Auth, DB |
+| CWP wire protocol — identical binary framing over QUIC and WebSocket | done | — |
+| Agent registration flow (single-use + persistent join tokens) | done | Auth, DB |
 | Agent heartbeat and connection status in dashboard | spec-only | CWP, EventBus |
 | Dashboard shows transport type per agent (QUIC vs WebSocket) | spec-only | EventBus |
 | Linux amd64 + arm64 agent builds | spec-only | Agent |
@@ -154,7 +154,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Audit logging for all access events | done | DB |
 | Audit log viewer in dashboard (search, filter, query) | spec-only | Frontend, DB |
 | Webhooks on audit events (HMAC-SHA256 signed, HTTPS-only in prod) | spec-only | DB |
-| Webhook subscription management (create, update, delete, test) | spec-only | DB |
+| Webhook subscription management (create, update, delete, test) | done | DB |
 | Webhook delivery history with retry tracking | spec-only | DB |
 | Dev mode: webhook delivery to `http://localhost` loopback | spec-only | Webhooks |
 | NIST SP 800-53 Rev. 5 control coverage | spec-only | All |
