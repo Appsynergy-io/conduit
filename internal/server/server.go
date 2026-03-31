@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/appsynergy-io/conduit/internal/auth"
 	"github.com/appsynergy-io/conduit/internal/db"
@@ -20,34 +21,73 @@ import (
 
 // Server holds the server state and dependencies.
 type Server struct {
-	cfg           *shared.Config
-	db            *db.DB
-	jwtMgr        *auth.JWTManager
-	router        chi.Router
-	logger        *slog.Logger
-	httpSrv       *http.Server
-	tlsConfig     *tls.Config
-	eventBus      *EventBus
-	agentRegistry *AgentRegistry
-	webhooks      *WebhookDeliverer
-	frontendFS    fs.FS
+	cfg              *shared.Config
+	db               *db.DB
+	jwtMgr           *auth.JWTManager
+	router           chi.Router
+	logger           *slog.Logger
+	httpSrv          *http.Server
+	tlsConfig        *tls.Config
+	eventBus         *EventBus
+	agentRegistry    *AgentRegistry
+	webhooks         *WebhookDeliverer
+	frontendFS       fs.FS
+	webAuthn         *webauthn.WebAuthn
+	webAuthnSessions *auth.WebAuthnSessionStore
 }
 
 // New creates a Server with all dependencies wired.
 func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig *tls.Config, logger *slog.Logger, frontendFS fs.FS) *Server {
 	s := &Server{
-		cfg:           cfg,
-		db:            database,
-		jwtMgr:        jwtMgr,
-		logger:        logger,
-		tlsConfig:     tlsConfig,
-		eventBus:      NewEventBus(logger),
-		agentRegistry: NewAgentRegistry(logger),
-		webhooks:      NewWebhookDeliverer(database, logger),
-		frontendFS:    frontendFS,
+		cfg:              cfg,
+		db:               database,
+		jwtMgr:           jwtMgr,
+		logger:           logger,
+		tlsConfig:        tlsConfig,
+		eventBus:         NewEventBus(logger),
+		agentRegistry:    NewAgentRegistry(logger),
+		webhooks:         NewWebhookDeliverer(database, logger),
+		frontendFS:       frontendFS,
+		webAuthnSessions: auth.NewWebAuthnSessionStore(),
 	}
+	s.initWebAuthn()
 	s.router = s.buildRouter()
 	return s
+}
+
+// initWebAuthn configures the WebAuthn relying party.
+// Uses the domain from config; falls back to "localhost" for dev mode.
+func (s *Server) initWebAuthn() {
+	domain := s.cfg.Server.Domain
+	if domain == "" {
+		if s.cfg.Server.Mode == "dev" {
+			domain = "localhost"
+		} else {
+			s.logger.Warn("WebAuthn not configured: server.domain not set")
+			return
+		}
+	}
+
+	var origins []string
+	if s.cfg.Server.Mode == "dev" {
+		// Dev mode uses self-signed certs on port 8443
+		origins = []string{"https://localhost" + s.cfg.Server.HTTPAddr}
+	} else {
+		origins = []string{"https://" + domain}
+	}
+
+	wa, err := webauthn.New(&webauthn.Config{
+		RPDisplayName: "Conduit",
+		RPID:          domain,
+		RPOrigins:     origins,
+	})
+	if err != nil {
+		s.logger.Error("failed to initialize WebAuthn", "error", err)
+		return
+	}
+
+	s.webAuthn = wa
+	s.logger.Info("WebAuthn initialized", "rpid", domain, "origins", origins)
 }
 
 // Router returns the chi router (for testing).
@@ -89,8 +129,9 @@ func (s *Server) buildRouter() chi.Router {
 		// Public auth endpoints (no JWT required)
 		r.Group(func(r chi.Router) {
 			r.Post("/auth/password/login", s.handlePasswordLogin)
-			r.Post("/auth/webauthn/login/begin", s.handleNotImplemented)
-			r.Post("/auth/webauthn/login/finish", s.handleNotImplemented)
+			r.Post("/auth/webauthn/login/begin", s.handleWebAuthnLoginBegin)
+			r.Post("/auth/webauthn/login/finish", s.handleWebAuthnLoginFinish)
+			r.Post("/auth/recovery/verify", s.handleVerifyRecoveryCode)
 		})
 
 		// Agent registration (token-based auth, no JWT)
@@ -105,11 +146,21 @@ func (s *Server) buildRouter() chi.Router {
 			r.Get("/auth/me", s.handleAuthMe)
 			r.Post("/auth/logout", s.handleLogout)
 
+			// WebAuthn passkey management (authenticated)
+			r.Post("/auth/webauthn/register/begin", s.handleWebAuthnRegisterBegin)
+			r.Post("/auth/webauthn/register/finish", s.handleWebAuthnRegisterFinish)
+			r.Get("/auth/webauthn/credentials", s.handleListPasskeys)
+			r.Delete("/auth/webauthn/credentials/{credentialId}", s.handleDeletePasskey)
+
+			// Recovery codes (authenticated — user generates their own codes)
+			r.Post("/auth/recovery/generate", s.handleGenerateRecoveryCodes)
+
 			// Users
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users", s.handleCreateUser)
 			r.Get("/users/{userId}", s.handleGetUser)
 			r.Patch("/users/{userId}", s.handleUpdateUser)
+			r.Post("/users/{userId}/recovery/reset", s.handleAdminRecoveryReset)
 
 			// Groups
 			r.Get("/groups", s.handleListGroups)
@@ -151,6 +202,10 @@ func (s *Server) buildRouter() chi.Router {
 				r.Get("/agents/tokens", s.handleListJoinTokens)
 				r.Post("/agents/tokens", s.handleCreateJoinToken)
 				r.Delete("/agents/tokens/{tokenId}", s.handleRevokeJoinToken)
+
+				// Shell recordings
+				r.Get("/recordings", s.handleListRecordings)
+				r.Get("/recordings/{recordingId}", s.handleGetRecording)
 			})
 		})
 	})
