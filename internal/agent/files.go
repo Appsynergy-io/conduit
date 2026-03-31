@@ -22,6 +22,9 @@ const (
 	// maxFileReadBytes is the maximum bytes returned inline for a file read.
 	maxFileReadBytes = 16 << 20 // 16 MB
 
+	// maxFileWriteBytes is the maximum bytes accepted for a file write.
+	maxFileWriteBytes = 16 << 20 // 16 MB
+
 	// maxPreviewBytes is the default preview size.
 	maxPreviewBytes = 65536
 )
@@ -201,6 +204,15 @@ func (a *Agent) handleFileWrite(ctx context.Context, mux *protocol.Mux, f *proto
 		return
 	}
 
+	// Enforce write size limit (OWASP API4, NIST REC-API-14)
+	if int64(len(data)) > maxFileWriteBytes {
+		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
+			Path:  cleanPath,
+			Error: fmt.Sprintf("file too large: %d bytes exceeds %d byte limit", len(data), maxFileWriteBytes),
+		})
+		return
+	}
+
 	// Parse mode, default 0644
 	mode := os.FileMode(0644)
 	if req.Mode != "" {
@@ -293,7 +305,7 @@ func (a *Agent) handleFileDelete(ctx context.Context, mux *protocol.Mux, f *prot
 	cleanPath := sanitizePath(req.Path)
 
 	// Never allow deleting root-level system paths
-	if cleanPath == "/" || cleanPath == "/root" || cleanPath == "/home" || cleanPath == "/etc" || cleanPath == "/var" || cleanPath == "/usr" {
+	if isProtectedPath(cleanPath) {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileDeleteResponse{
 			Path:  cleanPath,
 			Error: "refusing to delete system directory",
@@ -327,6 +339,16 @@ func (a *Agent) handleFileRename(ctx context.Context, mux *protocol.Mux, f *prot
 
 	oldPath := sanitizePath(req.OldPath)
 	newPath := sanitizePath(req.NewPath)
+
+	// Prevent renaming system directories or overwriting them
+	if isProtectedPath(oldPath) || isProtectedPath(newPath) {
+		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileRenameResponse{
+			OldPath: oldPath,
+			NewPath: newPath,
+			Error:   "refusing to rename system directory",
+		})
+		return
+	}
 
 	if err := os.Rename(oldPath, newPath); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileRenameResponse{
@@ -379,6 +401,18 @@ func (a *Agent) sendFileResponse(ctx context.Context, mux *protocol.Mux, frameTy
 	if err := mux.Send(ctx, f); err != nil {
 		a.logger.Debug("failed to send file response", "error", err)
 	}
+}
+
+// isProtectedPath returns true if the path is a critical system directory
+// that must not be deleted, overwritten, or renamed.
+func isProtectedPath(path string) bool {
+	switch path {
+	case "/", "/root", "/home", "/etc", "/var", "/usr",
+		"/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev",
+		"/proc", "/sys", "/tmp", "/run", "/opt", "/srv":
+		return true
+	}
+	return false
 }
 
 // sanitizePath cleans and validates an absolute path.
