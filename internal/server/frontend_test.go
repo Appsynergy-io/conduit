@@ -142,6 +142,29 @@ func TestFrontendHandler_SubpathWithDirectory(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "terminal")
 }
 
+func TestFrontendHandler_TrailingSlash(t *testing.T) {
+	h := newFrontendHandler(testFSWithDirs())
+
+	// /setup/ must serve setup.html, not the SPA fallback
+	tests := []struct {
+		path     string
+		contains string
+	}{
+		{"/login/", "login page"},
+		{"/setup/", "setup page"},
+		{"/dashboard/", "dashboard"},
+	}
+
+	for _, tt := range tests {
+		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code, "path %s", tt.path)
+		assert.Contains(t, rec.Body.String(), tt.contains, "path %s should contain %q", tt.path, tt.contains)
+	}
+}
+
 func TestFrontendHandler_CacheHeaders(t *testing.T) {
 	h := newFrontendHandler(testFS())
 

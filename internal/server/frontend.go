@@ -50,6 +50,14 @@ func newFrontendHandler(embedded fs.FS) http.Handler {
 			return
 		}
 
+		// Normalize trailing slashes: /setup/ → /setup
+		// Prevents cached 301 redirects from old handler versions
+		// from falling through to the SPA fallback.
+		if path != "/" && strings.HasSuffix(path, "/") {
+			path = strings.TrimRight(path, "/")
+			r.URL.Path = path
+		}
+
 		// Try to serve the exact file (CSS, JS, images, etc.)
 		// Skip directories — Next.js creates dirs like login/ alongside login.html
 		if path != "/" {

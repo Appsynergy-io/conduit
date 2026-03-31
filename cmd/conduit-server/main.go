@@ -104,8 +104,20 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// Create and start server
 	srv := server.New(cfg, database, jwtMgr, tlsCfg, logger, conduit.FrontendFS)
+
+	// Initialize setup (generates token if setup not yet complete)
+	token, err := srv.InitSetup(ctx)
+	if err != nil {
+		return fmt.Errorf("initializing setup: %w", err)
+	}
+
 	if err := srv.Start(ctx); err != nil {
 		return fmt.Errorf("starting server: %w", err)
+	}
+
+	if token != "" {
+		fmt.Fprintf(os.Stderr, "\n  Setup token: %s\n\n", token)
+		logger.InfoContext(ctx, "setup required — use the token above to complete setup")
 	}
 
 	logger.InfoContext(ctx, "server ready",
