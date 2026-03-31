@@ -116,7 +116,7 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Shell sessions in browser (xterm.js, full feature parity) | in-progress | CWP, Frontend |
+| Shell sessions in browser (xterm.js, full feature parity) | done | CWP, Frontend |
 | PTY shell execution on agent (Linux, macOS via creack/pty) | done | Agent |
 | Multiple concurrent shell sessions per agent (multiplexed via CWP) | done | CWP |
 | Terminal session recording + playback (asciicast v2) | spec-only | Shell, DB |
