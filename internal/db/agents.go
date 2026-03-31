@@ -157,6 +157,72 @@ func (d *DB) DeleteAgent(ctx context.Context, id string) error {
 	return nil
 }
 
+// AgentListParams holds filters for paginated agent listing.
+type AgentListParams struct {
+	TenantID  string
+	CursorAt  string
+	CursorID  string
+	Limit     int
+	Status    string
+	Transport string
+	OS        string
+	Search    string
+}
+
+// ListAgentsPaginated returns agents with cursor-based pagination and filters.
+func (d *DB) ListAgentsPaginated(ctx context.Context, p AgentListParams) ([]Agent, error) {
+	query := `SELECT id, tenant_id, hostname, display_name, os, arch, labels, ip,
+	           agent_key_hash, status, transport, version, last_seen_at, connected_at, created_at
+	           FROM agents WHERE tenant_id = ?`
+	args := []interface{}{p.TenantID}
+
+	if p.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, p.Status)
+	}
+	if p.Transport != "" && p.Transport != "all" {
+		query += ` AND transport = ?`
+		args = append(args, p.Transport)
+	}
+	if p.OS != "" && p.OS != "all" {
+		query += ` AND os = ?`
+		args = append(args, p.OS)
+	}
+	if p.Search != "" {
+		query += ` AND (hostname LIKE ? OR ip LIKE ?)`
+		term := "%" + p.Search + "%"
+		args = append(args, term, term)
+	}
+	if p.CursorAt != "" {
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, p.CursorAt, p.CursorAt, p.CursorID)
+	}
+
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, p.Limit+1)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing agents paginated: %w", err)
+	}
+	defer rows.Close()
+
+	var agents []Agent
+	for rows.Next() {
+		var a Agent
+		if err := rows.Scan(
+			&a.ID, &a.TenantID, &a.Hostname, &a.DisplayName,
+			&a.OS, &a.Arch, &a.Labels, &a.IP,
+			&a.AgentKeyHash, &a.Status, &a.Transport, &a.Version,
+			&a.LastSeenAt, &a.ConnectedAt, &a.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scanning agent: %w", err)
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
 // CountAgentsByStatus returns the number of agents with the given status for a tenant.
 func (d *DB) CountAgentsByStatus(ctx context.Context, tenantID, status string) (int, error) {
 	var count int

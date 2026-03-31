@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // JoinToken represents a row from the join_tokens table.
@@ -154,6 +155,67 @@ func (d *DB) RevokeJoinToken(ctx context.Context, id string) error {
 		return fmt.Errorf("join token not found: %s", id)
 	}
 	return nil
+}
+
+// TokenListParams holds filters for paginated join token listing.
+type TokenListParams struct {
+	TenantID  string
+	CursorAt  string
+	CursorID  string
+	Limit     int
+	Type      string // "single_use" or "persistent"
+	Revoked   string // "true" or "false"
+	Search    string
+}
+
+// ListJoinTokensPaginated returns join tokens with cursor-based pagination and filters.
+func (d *DB) ListJoinTokensPaginated(ctx context.Context, p TokenListParams) ([]JoinToken, error) {
+	query := `SELECT id, tenant_id, type, name, labels, token_hash, used_count, max_uses,
+	           expires_at, revoked, revoked_at, created_by, created_at
+	           FROM join_tokens WHERE tenant_id = ?`
+	args := []interface{}{p.TenantID}
+
+	if p.Type != "" {
+		query += ` AND type = ?`
+		args = append(args, p.Type)
+	}
+	if p.Revoked == "true" {
+		query += ` AND revoked = 1`
+	} else if p.Revoked == "false" {
+		query += ` AND revoked = 0`
+	}
+	if p.Search != "" {
+		query += ` AND name LIKE ?`
+		term := "%" + strings.ReplaceAll(p.Search, "%", "") + "%"
+		args = append(args, term)
+	}
+	if p.CursorAt != "" {
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, p.CursorAt, p.CursorAt, p.CursorID)
+	}
+
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, p.Limit+1)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing join tokens paginated: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []JoinToken
+	for rows.Next() {
+		var t JoinToken
+		if err := rows.Scan(
+			&t.ID, &t.TenantID, &t.Type, &t.Name, &t.Labels, &t.TokenHash,
+			&t.UsedCount, &t.MaxUses, &t.ExpiresAt, &t.Revoked, &t.RevokedAt,
+			&t.CreatedBy, &t.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scanning join token: %w", err)
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
 }
 
 // DeleteJoinToken permanently removes a join token.

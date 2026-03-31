@@ -105,22 +105,22 @@ func (s *Server) buildRouter() chi.Router {
 			r.Get("/audit/events", s.handleListAuditEvents)
 
 			// Webhooks
-			r.Get("/webhooks", s.handleNotImplemented)
-			r.Post("/webhooks", s.handleNotImplemented)
+			r.Get("/webhooks", s.handleListWebhooks)
+			r.Post("/webhooks", s.handleCreateWebhook)
 
 			// Service-scoped: remote-access
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireService("remote-access"))
 
 				// Agents
-				r.Get("/agents", s.handleNotImplemented)
-				r.Get("/agents/{agentId}", s.handleNotImplemented)
-				r.Delete("/agents/{agentId}", s.handleNotImplemented)
+				r.Get("/agents", s.handleListAgents)
+				r.Get("/agents/{agentId}", s.handleGetAgent)
+				r.Delete("/agents/{agentId}", s.handleDeleteAgent)
 
 				// Join tokens
-				r.Get("/agents/tokens", s.handleNotImplemented)
-				r.Post("/agents/tokens", s.handleNotImplemented)
-				r.Delete("/agents/tokens/{tokenId}", s.handleNotImplemented)
+				r.Get("/agents/tokens", s.handleListJoinTokens)
+				r.Post("/agents/tokens", s.handleCreateJoinToken)
+				r.Delete("/agents/tokens/{tokenId}", s.handleRevokeJoinToken)
 			})
 		})
 	})
