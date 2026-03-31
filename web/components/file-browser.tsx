@@ -19,6 +19,7 @@ import {
   Upload,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -145,7 +146,7 @@ function parentPath(path: string): string {
 // ── Component ────────────────────────────────────────
 
 export function FileBrowser({ agentId }: FileBrowserProps) {
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const [currentPath, setCurrentPath] = useState("/")
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -164,7 +165,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
 
   const uploadRef = useRef<HTMLInputElement>(null)
 
@@ -172,7 +172,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
 
   const fetchEntries = useCallback(
     async (path: string) => {
-      if (!token) return
+      if (!isAuthenticated) return
       setLoading(true)
       setError(null)
 
@@ -183,7 +183,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         })
         const res = await fetch(
           `/api/v1/agents/${encodeURIComponent(agentId)}/files?${params.toString()}`,
-          { headers: { Authorization: `Bearer ${token}` } },
         )
 
         if (!res.ok) {
@@ -208,7 +207,7 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         setLoading(false)
       }
     },
-    [token, agentId, showHidden],
+    [isAuthenticated, agentId, showHidden],
   )
 
   useEffect(() => {
@@ -234,16 +233,15 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
 
   const handleDownload = useCallback(
     async (entry: FileEntry) => {
-      if (!token) return
+      if (!isAuthenticated) return
       const filePath = joinPath(currentPath, entry.name)
       const params = new URLSearchParams({ path: filePath })
       const res = await fetch(
         `/api/v1/agents/${encodeURIComponent(agentId)}/files/download?${params.toString()}`,
-        { headers: { Authorization: `Bearer ${token}` } },
       )
 
       if (!res.ok) {
-        setActionError("Download failed")
+        toast.error("Download failed")
         return
       }
 
@@ -255,16 +253,15 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       a.click()
       URL.revokeObjectURL(url)
     },
-    [token, agentId, currentPath],
+    [isAuthenticated, agentId, currentPath],
   )
 
   // ── Upload ──
 
   const handleUpload = useCallback(
     async (file: globalThis.File) => {
-      if (!token) return
+      if (!isAuthenticated) return
       setActionLoading(true)
-      setActionError(null)
 
       try {
         const targetPath = joinPath(currentPath, file.name)
@@ -274,7 +271,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${token}`,
               "Content-Type": "application/octet-stream",
             },
             body: file,
@@ -282,22 +278,19 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         )
 
         if (!res.ok) {
-          if (res.status === 413) {
-            setActionError("File exceeds maximum upload size")
-          } else {
-            setActionError("Upload failed")
-          }
+          toast.error(res.status === 413 ? "File exceeds maximum upload size" : "Upload failed")
           return
         }
 
+        toast.success(`Uploaded ${file.name}`)
         await fetchEntries(currentPath)
       } catch {
-        setActionError("Upload failed")
+        toast.error("Upload failed")
       } finally {
         setActionLoading(false)
       }
     },
-    [token, agentId, currentPath, fetchEntries],
+    [isAuthenticated, agentId, currentPath, fetchEntries],
   )
 
   const onFileSelected = useCallback(
@@ -313,16 +306,14 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
   // ── Delete ──
 
   const handleDelete = useCallback(async () => {
-    if (!token || !deleteTarget) return
+    if (!isAuthenticated || !deleteTarget) return
     setActionLoading(true)
-    setActionError(null)
 
     try {
       const filePath = joinPath(currentPath, deleteTarget.name)
       const res = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/files/delete`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -332,26 +323,26 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       })
 
       if (!res.ok) {
-        setActionError("Delete failed")
+        toast.error("Delete failed")
         return
       }
 
+      toast.success(`Deleted ${deleteTarget.name}`)
       setDeleteOpen(false)
       setDeleteTarget(null)
       await fetchEntries(currentPath)
     } catch {
-      setActionError("Delete failed")
+      toast.error("Delete failed")
     } finally {
       setActionLoading(false)
     }
-  }, [token, agentId, currentPath, deleteTarget, fetchEntries])
+  }, [isAuthenticated, agentId, currentPath, deleteTarget, fetchEntries])
 
   // ── Rename ──
 
   const handleRename = useCallback(async () => {
-    if (!token || !renameTarget || !renameName.trim()) return
+    if (!isAuthenticated || !renameTarget || !renameName.trim()) return
     setActionLoading(true)
-    setActionError(null)
 
     try {
       const oldPath = joinPath(currentPath, renameTarget.name)
@@ -359,74 +350,65 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
       const res = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/files/rename`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ oldPath, newPath }),
       })
 
       if (!res.ok) {
-        if (res.status === 409) {
-          setActionError("A file with that name already exists")
-        } else {
-          setActionError("Rename failed")
-        }
+        toast.error(res.status === 409 ? "A file with that name already exists" : "Rename failed")
         return
       }
 
+      toast.success(`Renamed to ${renameName.trim()}`)
       setRenameOpen(false)
       setRenameTarget(null)
       setRenameName("")
       await fetchEntries(currentPath)
     } catch {
-      setActionError("Rename failed")
+      toast.error("Rename failed")
     } finally {
       setActionLoading(false)
     }
-  }, [token, agentId, currentPath, renameTarget, renameName, fetchEntries])
+  }, [isAuthenticated, agentId, currentPath, renameTarget, renameName, fetchEntries])
 
   // ── Mkdir ──
 
   const handleMkdir = useCallback(async () => {
-    if (!token || !mkdirName.trim()) return
+    if (!isAuthenticated || !mkdirName.trim()) return
     setActionLoading(true)
-    setActionError(null)
 
     try {
       const dirPath = joinPath(currentPath, mkdirName.trim())
       const res = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/files/mkdir`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ path: dirPath, parents: true }),
       })
 
       if (!res.ok) {
-        if (res.status === 409) {
-          setActionError("Directory already exists")
-        } else {
-          setActionError("Failed to create directory")
-        }
+        toast.error(res.status === 409 ? "Directory already exists" : "Failed to create directory")
         return
       }
 
+      toast.success(`Created ${mkdirName.trim()}`)
       setMkdirOpen(false)
       setMkdirName("")
       await fetchEntries(currentPath)
     } catch {
-      setActionError("Failed to create directory")
+      toast.error("Failed to create directory")
     } finally {
       setActionLoading(false)
     }
-  }, [token, agentId, currentPath, mkdirName, fetchEntries])
+  }, [isAuthenticated, agentId, currentPath, mkdirName, fetchEntries])
 
   // ── Preview ──
 
   const handlePreview = useCallback(
     async (entry: FileEntry) => {
-      if (!token) return
+      if (!isAuthenticated) return
       setPreviewLoading(true)
       setPreviewOpen(true)
       setPreview(null)
@@ -436,12 +418,11 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         const params = new URLSearchParams({ path: filePath })
         const res = await fetch(
           `/api/v1/agents/${encodeURIComponent(agentId)}/files/preview?${params.toString()}`,
-          { headers: { Authorization: `Bearer ${token}` } },
         )
 
         if (!res.ok) {
           setPreviewOpen(false)
-          setActionError("Preview failed")
+          toast.error("Preview failed")
           return
         }
 
@@ -449,12 +430,12 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
         setPreview(data)
       } catch {
         setPreviewOpen(false)
-        setActionError("Preview failed")
+        toast.error("Preview failed")
       } finally {
         setPreviewLoading(false)
       }
     },
-    [token, agentId, currentPath],
+    [isAuthenticated, agentId, currentPath],
   )
 
   // ── Sort entries: directories first, then alphabetical ──
@@ -555,15 +536,6 @@ export function FileBrowser({ agentId }: FileBrowserProps) {
           />
         </div>
       </div>
-
-      {/* Action error banner */}
-      {actionError && (
-        <Alert variant="destructive" className="mx-4 mt-2">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{actionError}</AlertDescription>
-        </Alert>
-      )}
 
       {/* Loading state */}
       {loading && (

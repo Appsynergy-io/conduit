@@ -163,11 +163,11 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		labelsStr = *joinToken.Labels
 	}
 	detailsMap := map[string]string{
-		"agent_id":  agentID,
-		"hostname":  req.Hostname,
-		"token_id":  joinToken.ID,
+		"agent_id":   agentID,
+		"hostname":   req.Hostname,
+		"token_id":   joinToken.ID,
 		"token_type": joinToken.Type,
-		"labels":    labelsStr,
+		"labels":     labelsStr,
 	}
 	detailsJSON, _ := json.Marshal(detailsMap)
 

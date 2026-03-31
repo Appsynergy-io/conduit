@@ -10,6 +10,7 @@ import (
 	"github.com/appsynergy-io/conduit/internal/apierror"
 	"github.com/appsynergy-io/conduit/internal/auth"
 	"github.com/appsynergy-io/conduit/internal/db"
+	"github.com/appsynergy-io/conduit/internal/middleware"
 )
 
 // loginRequest is the request body for POST /api/v1/auth/password/login.
@@ -81,11 +82,11 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	// Create session
 	sessionID := uuid.NewString()
 	session := &db.Session{
-		ID:       sessionID,
-		TenantID: user.TenantID,
-		UserID:   user.ID,
-		Type:     "web",
-		SourceIP: strPtr(r.RemoteAddr),
+		ID:        sessionID,
+		TenantID:  user.TenantID,
+		UserID:    user.ID,
+		Type:      "web",
+		SourceIP:  strPtr(r.RemoteAddr),
 		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
 	}
 	if err := s.db.CreateSession(ctx, session); err != nil {
@@ -123,13 +124,73 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		Outcome:   "success",
 	})
 
+	// Set httpOnly cookie before writing the response body (NIST SC-23, OWASP V3)
+	setAuthCookie(w, accessToken, 900)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
 		"tokenType":    "Bearer",
-		"expiresIn":    900, // 15 minutes
+		"expiresIn":    900,
+		"user": map[string]any{
+			"id":       user.ID,
+			"email":    user.Email,
+			"tenantId": user.TenantID,
+			"roles":    []string{user.Role},
+		},
 	})
+}
+
+// setAuthCookie sets the httpOnly auth cookie with strict security attributes.
+// Uses __Host- prefix which requires Secure, Path=/, and no Domain (OWASP V3, NIST SC-23).
+func setAuthCookie(w http.ResponseWriter, token string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.AuthCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// clearAuthCookie removes the httpOnly auth cookie by setting it to expire immediately.
+func clearAuthCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.AuthCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// handleAuthMe returns the authenticated user's identity from the JWT claims.
+// GET /api/v1/auth/me
+func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	if claims == nil {
+		apierror.Unauthorized(w, r, "Authentication required.", nil)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"userId":   claims.Subject,
+		"tenantId": claims.TenantID,
+		"roles":    claims.Roles,
+	})
+}
+
+// handleLogout clears the auth cookie and returns 204 No Content.
+// POST /api/v1/auth/logout
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	clearAuthCookie(w)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // auditLoginFailure logs a failed login attempt (NIST AC-7, AU-2).

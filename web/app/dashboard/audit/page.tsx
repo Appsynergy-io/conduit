@@ -1,9 +1,10 @@
-"use client";
+"use client"
 
-import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { formatDistanceToNow } from "date-fns"
+import { ScrollText } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -11,63 +12,61 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { formatDistanceToNow } from "date-fns";
+} from "@/components/ui/table"
+import { useAuth } from "@/hooks/use-auth"
 
 interface AuditEvent {
-  id: string;
-  eventType: string;
-  userEmail?: string;
-  agentHostname?: string;
-  sourceIp?: string;
-  outcome: string;
-  timestamp: string;
+  id: string
+  eventType: string
+  userEmail?: string
+  agentHostname?: string
+  sourceIp?: string
+  outcome: string
+  timestamp: string
 }
 
 export default function AuditPage() {
-  const { token } = useAuth();
-  const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { isAuthenticated } = useAuth()
+  const [events, setEvents] = useState<AuditEvent[]>([])
+  const [loading, setLoading] = useState(true)
 
   const fetchEvents = useCallback(async () => {
-    if (!token) return;
+    if (!isAuthenticated) return
     try {
-      const res = await fetch("/api/v1/audit/events?limit=50", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch("/api/v1/audit/events?limit=50")
       if (res.ok) {
-        const data = await res.json();
-        setEvents(data.items ?? []);
+        const data = await res.json()
+        setEvents(data.items ?? [])
       }
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [token]);
+  }, [isAuthenticated])
 
   useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+    fetchEvents()
+  }, [fetchEvents])
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Audit Log</h1>
-        <p className="text-sm text-muted-foreground">
-          Security events and access history.
-        </p>
+        <p className="text-sm text-muted-foreground">Security events and access history.</p>
       </div>
 
       {loading ? (
         <div className="space-y-3">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-10 w-full" />
+          {["a", "b", "c", "d", "e", "f", "g", "h"].map((k) => (
+            <Skeleton key={k} className="h-10 w-full" />
           ))}
         </div>
       ) : events.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
-          <p className="text-lg font-medium">No audit events</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Events will appear here as users and agents interact with Conduit.
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+          <ScrollText className="h-12 w-12 text-muted-foreground/50" />
+          <h3 className="mt-4 text-lg font-medium">No audit events</h3>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            Security events will appear here as users log in, open shells, transfer files, and
+            manage agents.
           </p>
         </div>
       ) : (
@@ -86,27 +85,17 @@ export default function AuditPage() {
             <TableBody>
               {events.map((event) => (
                 <TableRow key={event.id}>
-                  <TableCell className="font-mono text-xs">
-                    {event.eventType}
-                  </TableCell>
+                  <TableCell className="font-mono text-xs">{event.eventType}</TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        event.outcome === "success" ? "default" : "destructive"
-                      }
-                    >
+                    <Badge variant={event.outcome === "success" ? "default" : "destructive"}>
                       {event.outcome}
                     </Badge>
                   </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    {event.userEmail ?? "-"}
-                  </TableCell>
+                  <TableCell className="hidden md:table-cell">{event.userEmail ?? "-"}</TableCell>
                   <TableCell className="hidden md:table-cell">
                     {event.agentHostname ?? "-"}
                   </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {event.sourceIp ?? "-"}
-                  </TableCell>
+                  <TableCell className="hidden lg:table-cell">{event.sourceIp ?? "-"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {formatDistanceToNow(new Date(event.timestamp), {
                       addSuffix: true,
@@ -119,5 +108,5 @@ export default function AuditPage() {
         </div>
       )}
     </div>
-  );
+  )
 }

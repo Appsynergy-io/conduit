@@ -38,22 +38,22 @@ type WebhookPayload struct {
 
 // webhookWork is an internal work item for the delivery queue.
 type webhookWork struct {
-	sub       db.WebhookSubscription
-	payload   WebhookPayload
-	attempt   int
-	retryAt   time.Time
+	sub     db.WebhookSubscription
+	payload WebhookPayload
+	attempt int
+	retryAt time.Time
 }
 
 // WebhookDeliverer delivers webhook events to subscribers asynchronously.
 // It maintains a background worker that processes delivery jobs from a queue.
 type WebhookDeliverer struct {
-	database    *db.DB
-	logger      *slog.Logger
-	client      *http.Client
-	queue       chan webhookWork
-	wg          sync.WaitGroup
-	cancel      context.CancelFunc
-	skipSSRF    bool // For testing only — disables SSRF validation
+	database *db.DB
+	logger   *slog.Logger
+	client   *http.Client
+	queue    chan webhookWork
+	wg       sync.WaitGroup
+	cancel   context.CancelFunc
+	skipSSRF bool // For testing only — disables SSRF validation
 }
 
 // NewWebhookDeliverer creates a webhook delivery engine.

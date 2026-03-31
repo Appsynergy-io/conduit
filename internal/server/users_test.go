@@ -38,7 +38,7 @@ func TestListUsers_Success(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		u := &db.User{
 			ID: uuid.NewString(), TenantID: tenantID,
-			Email: "user" + string(rune('a'+i)) + "@test.com",
+			Email:     "user" + string(rune('a'+i)) + "@test.com",
 			FirstName: "User", LastName: "Test", Role: "org_member", Status: "active",
 		}
 		require.NoError(t, database.CreateUser(ctx, u))
@@ -75,7 +75,7 @@ func TestListUsers_Pagination(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		u := &db.User{
 			ID: uuid.NewString(), TenantID: tenantID,
-			Email: "page" + string(rune('a'+i)) + "@test.com",
+			Email:     "page" + string(rune('a'+i)) + "@test.com",
 			FirstName: "User", LastName: "Test", Role: "org_member", Status: "active",
 		}
 		require.NoError(t, database.CreateUser(ctx, u))
