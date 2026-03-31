@@ -149,6 +149,54 @@ func (d *DB) DeleteSessionsByUser(ctx context.Context, userID string) error {
 	return nil
 }
 
+// SessionListParams holds filters for paginated session listing.
+type SessionListParams struct {
+	TenantID string
+	CursorAt string
+	CursorID string
+	Limit    int
+	Type     string // "web", "cli", "ci", "" for all
+}
+
+// ListSessionsPaginated returns sessions with cursor-based pagination.
+func (d *DB) ListSessionsPaginated(ctx context.Context, p SessionListParams) ([]Session, error) {
+	query := `SELECT id, tenant_id, user_id, type, source_ip, user_agent,
+	           refresh_token_hash, expires_at, created_at, last_active_at
+	           FROM sessions WHERE tenant_id = ?`
+	args := []interface{}{p.TenantID}
+
+	if p.Type != "" && p.Type != "all" {
+		query += ` AND type = ?`
+		args = append(args, p.Type)
+	}
+	if p.CursorAt != "" {
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, p.CursorAt, p.CursorAt, p.CursorID)
+	}
+
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, p.Limit+1)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions paginated: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []Session
+	for rows.Next() {
+		var s Session
+		if err := rows.Scan(
+			&s.ID, &s.TenantID, &s.UserID, &s.Type, &s.SourceIP, &s.UserAgent,
+			&s.RefreshTokenHash, &s.ExpiresAt, &s.CreatedAt, &s.LastActiveAt,
+		); err != nil {
+			return nil, fmt.Errorf("scanning session: %w", err)
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
 // DeleteExpiredSessions removes all sessions past their expiry and returns the count removed.
 func (d *DB) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 	result, err := d.conn.ExecContext(ctx,

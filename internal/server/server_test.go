@@ -97,7 +97,8 @@ func TestAuthenticatedEndpoint_ValidAuth(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	// Users endpoint is now implemented — returns 200 with empty list
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestAuthenticatedEndpoint_InvalidToken(t *testing.T) {
