@@ -18,14 +18,14 @@ interface Agent {
 function TerminalContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const agentId = searchParams.get("agent")
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!token || !agentId) {
+    if (!isAuthenticated || !agentId) {
       setLoading(false)
       return
     }
@@ -36,7 +36,6 @@ function TerminalContent() {
     async function fetchAgent() {
       try {
         const res = await fetch(`/api/v1/agents/${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         })
 
@@ -63,7 +62,7 @@ function TerminalContent() {
 
     fetchAgent()
     return () => controller.abort()
-  }, [token, agentId])
+  }, [isAuthenticated, agentId])
 
   const handleClose = useCallback(() => {
     router.push("/dashboard")

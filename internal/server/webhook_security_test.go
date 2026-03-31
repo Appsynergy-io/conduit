@@ -318,7 +318,7 @@ func TestWebhookDelivery_TimeoutEnforced(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	wd := NewWebhookDeliverer(database, logger)
-	wd.skipSSRF = true // httptest binds to 127.0.0.1
+	wd.skipSSRF = true                         // httptest binds to 127.0.0.1
 	wd.client.Timeout = 500 * time.Millisecond // Short timeout for test
 	wd.Start(ctx)
 	defer wd.Stop()

@@ -26,16 +26,14 @@ interface User {
 }
 
 export default function UsersPage() {
-  const { token } = useAuth()
+  const { isAuthenticated } = useAuth()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchUsers = useCallback(async () => {
-    if (!token) return
+    if (!isAuthenticated) return
     try {
-      const res = await fetch("/api/v1/users", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await fetch("/api/v1/users")
       if (res.ok) {
         const data = await res.json()
         setUsers(data.items ?? [])
@@ -43,7 +41,7 @@ export default function UsersPage() {
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [isAuthenticated])
 
   useEffect(() => {
     fetchUsers()

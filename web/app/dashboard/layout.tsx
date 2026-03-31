@@ -1,29 +1,23 @@
-"use client";
+"use client"
 
-import { AuthGuard } from "@/components/auth-guard";
-import { AppSidebar } from "@/components/app-sidebar";
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
-import { useAuth } from "@/hooks/use-auth";
-import { useWebSocket } from "@/hooks/use-websocket";
-import { WebSocketProvider } from "@/hooks/use-websocket-context";
-import { Badge } from "@/components/ui/badge";
+import { AppSidebar } from "@/components/app-sidebar"
+import { AuthGuard } from "@/components/auth-guard"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { useWebSocket } from "@/hooks/use-websocket"
+import { WebSocketProvider } from "@/hooks/use-websocket-context"
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
       <DashboardShell>{children}</DashboardShell>
     </AuthGuard>
-  );
+  )
 }
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
-  const { token } = useAuth();
-  const ws = useWebSocket(token);
+  const ws = useWebSocket()
 
   return (
     <WebSocketProvider value={ws}>
@@ -43,5 +37,5 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </SidebarInset>
       </SidebarProvider>
     </WebSocketProvider>
-  );
+  )
 }

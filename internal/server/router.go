@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -13,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/appsynergy-io/conduit/internal/db"
+	"github.com/appsynergy-io/conduit/internal/middleware"
 	"github.com/appsynergy-io/conduit/internal/protocol"
 )
 
@@ -24,14 +24,8 @@ import (
 func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "agentId")
 
-	// Authenticate via query param token (WebSocket upgrade)
-	tokenStr := r.URL.Query().Get("token")
-	if tokenStr == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenStr = authHeader[7:]
-		}
-	}
+	// Authenticate via Authorization header or httpOnly cookie (NIST IA-2, OWASP A07)
+	tokenStr := middleware.ExtractToken(r)
 	if tokenStr == "" {
 		http.Error(w, "Missing authentication token", http.StatusUnauthorized)
 		return
