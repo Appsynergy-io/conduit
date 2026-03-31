@@ -28,6 +28,7 @@ type Server struct {
 	tlsConfig     *tls.Config
 	eventBus      *EventBus
 	agentRegistry *AgentRegistry
+	webhooks      *WebhookDeliverer
 }
 
 // New creates a Server with all dependencies wired.
@@ -40,6 +41,7 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 		tlsConfig: tlsConfig,
 		eventBus:      NewEventBus(logger),
 		agentRegistry: NewAgentRegistry(logger),
+		webhooks:      NewWebhookDeliverer(database, logger),
 	}
 	s.router = s.buildRouter()
 	return s
@@ -129,6 +131,15 @@ func (s *Server) buildRouter() chi.Router {
 				r.Get("/agents/{agentId}", s.handleGetAgent)
 				r.Delete("/agents/{agentId}", s.handleDeleteAgent)
 
+				// Agent file operations
+				r.Get("/agents/{agentId}/files", s.handleListFiles)
+				r.Get("/agents/{agentId}/files/download", s.handleDownloadFile)
+				r.Post("/agents/{agentId}/files/upload", s.handleUploadFile)
+				r.Post("/agents/{agentId}/files/delete", s.handleDeleteFile)
+				r.Post("/agents/{agentId}/files/rename", s.handleRenameFile)
+				r.Post("/agents/{agentId}/files/mkdir", s.handleMkdir)
+				r.Get("/agents/{agentId}/files/preview", s.handlePreviewFile)
+
 				// Join tokens
 				r.Get("/agents/tokens", s.handleListJoinTokens)
 				r.Post("/agents/tokens", s.handleCreateJoinToken)
@@ -165,6 +176,9 @@ func (s *Server) Start(ctx context.Context) error {
 		"mode", s.cfg.Server.Mode,
 	)
 
+	// Start webhook delivery workers
+	s.webhooks.Start(ctx)
+
 	go func() {
 		if err := s.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			s.logger.ErrorContext(ctx, "server error", "error", err)
@@ -180,5 +194,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.logger.InfoContext(ctx, "shutting down server")
+	s.webhooks.Stop()
 	return s.httpSrv.Shutdown(ctx)
 }
