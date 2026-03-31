@@ -24,9 +24,10 @@ type Server struct {
 	jwtMgr    *auth.JWTManager
 	router    chi.Router
 	logger    *slog.Logger
-	httpSrv   *http.Server
-	tlsConfig *tls.Config
-	eventBus  *EventBus
+	httpSrv       *http.Server
+	tlsConfig     *tls.Config
+	eventBus      *EventBus
+	agentRegistry *AgentRegistry
 }
 
 // New creates a Server with all dependencies wired.
@@ -37,7 +38,8 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 		jwtMgr:    jwtMgr,
 		logger:    logger,
 		tlsConfig: tlsConfig,
-		eventBus:  NewEventBus(logger),
+		eventBus:      NewEventBus(logger),
+		agentRegistry: NewAgentRegistry(logger),
 	}
 	s.router = s.buildRouter()
 	return s
@@ -63,8 +65,10 @@ func (s *Server) buildRouter() chi.Router {
 	// Public routes (no auth)
 	r.Get("/health", s.handleHealth)
 
-	// WebSocket EventBus (outside RequireJSON — WebSocket upgrade is not JSON)
+	// WebSocket endpoints (outside RequireJSON — WebSocket upgrade is not JSON)
 	r.Get("/api/v1/events/stream", s.handleEventStream)
+	r.Get("/api/v1/shell/{agentId}", s.handleShellSession)
+	r.Get("/agent/v1/connect", s.handleAgentConnect)
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
