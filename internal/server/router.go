@@ -103,6 +103,12 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Initialize asciicast v2 recorder if recording is enabled (NIST AU-2)
+	var recorder *asciicastRecorder
+	if shellSession.Recording == 1 {
+		recorder = newAsciicastRecorder(cols, rows)
+	}
+
 	// Send SHELL_START to agent
 	startPayload := protocol.ShellStartPayload{
 		SessionID: sessionID,
@@ -208,6 +214,9 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 					writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
 					browserConn.Write(writeCtx, websocket.MessageBinary, f.Payload)
 					writeCancel()
+					if recorder != nil {
+						recorder.WriteOutput(f.Payload)
+					}
 				case protocol.FrameShellExit:
 					// Shell exited
 					return
@@ -226,6 +235,25 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 
 	// Close shell session
 	s.db.CloseShellSession(ctx, sessionID)
+
+	// Save shell recording if enabled (NIST AU-2, AU-12)
+	if recorder != nil && recorder.buf.Len() > 0 {
+		rec := &db.ShellRecording{
+			ID:            uuid.NewString(),
+			TenantID:      claims.TenantID,
+			SessionID:     sessionID,
+			AgentID:       agentID,
+			UserID:        claims.Subject,
+			AgentHostname: agent.Hostname,
+			Duration:      recorder.Duration(),
+			SizeBytes:     recorder.buf.Len(),
+			Format:        "asciicast-v2",
+			Data:          recorder.Bytes(),
+		}
+		if err := s.db.CreateShellRecording(ctx, rec); err != nil {
+			s.logger.Error("failed to save shell recording", "error", err, "session_id", sessionID)
+		}
+	}
 
 	s.logger.Info("shell session ended",
 		"session_id", sessionID,
