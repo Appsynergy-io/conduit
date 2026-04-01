@@ -145,7 +145,7 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Bulk command execution — multi-server parallel script runner | spec-only | CWP, Agent |
+| Bulk command execution — multi-server parallel script runner | done | CWP, Agent |
 | Binary deployment service | spec-only | Agent, Binary Signing |
 
 ### Audit & Compliance
