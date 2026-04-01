@@ -193,3 +193,180 @@ func TestGetAgentByID_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
+
+func TestUpdateAgentMetadata(t *testing.T) {
+	d := newTestDB(t)
+	tid := seedTenant(t, d)
+	ctx := context.Background()
+
+	a := makeAgent(tid)
+	require.NoError(t, d.CreateAgent(ctx, a))
+
+	dn := "My Server"
+	labels := `{"env":"staging","region":"eu"}`
+	err := d.UpdateAgentMetadata(ctx, a.ID, &dn, &labels)
+	require.NoError(t, err)
+
+	got, err := d.GetAgentByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.NotNil(t, got.DisplayName)
+	assert.Equal(t, "My Server", *got.DisplayName)
+	require.NotNil(t, got.Labels)
+	assert.Equal(t, labels, *got.Labels)
+}
+
+func TestUpdateAgentMetadata_ClearFields(t *testing.T) {
+	d := newTestDB(t)
+	tid := seedTenant(t, d)
+	ctx := context.Background()
+
+	a := makeAgent(tid)
+	dn := "Initial Name"
+	labels := `{"env":"prod"}`
+	a.DisplayName = &dn
+	a.Labels = &labels
+	require.NoError(t, d.CreateAgent(ctx, a))
+
+	// Clear both fields
+	err := d.UpdateAgentMetadata(ctx, a.ID, nil, nil)
+	require.NoError(t, err)
+
+	got, err := d.GetAgentByID(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.DisplayName)
+	assert.Nil(t, got.Labels)
+}
+
+func TestListLabels(t *testing.T) {
+	d := newTestDB(t)
+	tid := seedTenant(t, d)
+	ctx := context.Background()
+
+	// Create agents with various labels
+	a1 := makeAgent(tid)
+	a1.Labels = ptr(`{"env":"production","role":"web"}`)
+	require.NoError(t, d.CreateAgent(ctx, a1))
+
+	a2 := makeAgent(tid)
+	a2.Labels = ptr(`{"env":"staging","role":"api"}`)
+	require.NoError(t, d.CreateAgent(ctx, a2))
+
+	a3 := makeAgent(tid)
+	a3.Labels = ptr(`{"env":"production","dc":"us-east-1"}`)
+	require.NoError(t, d.CreateAgent(ctx, a3))
+
+	// Agent with no labels
+	a4 := makeAgent(tid)
+	require.NoError(t, d.CreateAgent(ctx, a4))
+
+	labels, err := d.ListLabels(ctx, tid)
+	require.NoError(t, err)
+	require.Len(t, labels, 3) // env, role, dc
+
+	// Results sorted by key
+	assert.Equal(t, "dc", labels[0].Key)
+	assert.Equal(t, []string{"us-east-1"}, labels[0].Values)
+	assert.Equal(t, 1, labels[0].Count)
+
+	assert.Equal(t, "env", labels[1].Key)
+	assert.Equal(t, []string{"production", "staging"}, labels[1].Values)
+	assert.Equal(t, 3, labels[1].Count)
+
+	assert.Equal(t, "role", labels[2].Key)
+	assert.Equal(t, []string{"api", "web"}, labels[2].Values)
+	assert.Equal(t, 2, labels[2].Count)
+}
+
+func TestListLabels_EmptyTenant(t *testing.T) {
+	d := newTestDB(t)
+	tid := seedTenant(t, d)
+	ctx := context.Background()
+
+	labels, err := d.ListLabels(ctx, tid)
+	require.NoError(t, err)
+	assert.Empty(t, labels)
+}
+
+func TestListAgentsPaginated_LabelFilter(t *testing.T) {
+	d := newTestDB(t)
+	tid := seedTenant(t, d)
+	ctx := context.Background()
+
+	a1 := makeAgent(tid)
+	a1.Labels = ptr(`{"env":"production","role":"web"}`)
+	require.NoError(t, d.CreateAgent(ctx, a1))
+
+	a2 := makeAgent(tid)
+	a2.Labels = ptr(`{"env":"staging","role":"api"}`)
+	require.NoError(t, d.CreateAgent(ctx, a2))
+
+	a3 := makeAgent(tid)
+	a3.Labels = ptr(`{"env":"production","role":"api"}`)
+	require.NoError(t, d.CreateAgent(ctx, a3))
+
+	a4 := makeAgent(tid)
+	require.NoError(t, d.CreateAgent(ctx, a4))
+
+	// Exact match
+	agents, err := d.ListAgentsPaginated(ctx, db.AgentListParams{
+		TenantID: tid,
+		Limit:    100,
+		Labels:   []db.LabelFilter{{Key: "env", Values: []string{"production"}}},
+	})
+	require.NoError(t, err)
+	assert.Len(t, agents, 2)
+
+	// OR match
+	agents, err = d.ListAgentsPaginated(ctx, db.AgentListParams{
+		TenantID: tid,
+		Limit:    100,
+		Labels:   []db.LabelFilter{{Key: "role", Values: []string{"web", "api"}}},
+	})
+	require.NoError(t, err)
+	assert.Len(t, agents, 3)
+
+	// AND match (multiple filters)
+	agents, err = d.ListAgentsPaginated(ctx, db.AgentListParams{
+		TenantID: tid,
+		Limit:    100,
+		Labels: []db.LabelFilter{
+			{Key: "env", Values: []string{"production"}},
+			{Key: "role", Values: []string{"api"}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, agents, 1)
+	assert.Equal(t, a3.ID, agents[0].ID)
+
+	// Existence check
+	agents, err = d.ListAgentsPaginated(ctx, db.AgentListParams{
+		TenantID: tid,
+		Limit:    100,
+		Labels:   []db.LabelFilter{{Key: "role"}},
+	})
+	require.NoError(t, err)
+	assert.Len(t, agents, 3)
+
+	// Negate
+	agents, err = d.ListAgentsPaginated(ctx, db.AgentListParams{
+		TenantID: tid,
+		Limit:    100,
+		Labels:   []db.LabelFilter{{Key: "env", Values: []string{"staging"}, Negate: true}},
+	})
+	require.NoError(t, err)
+	// a1 (production), a3 (production), a4 (no labels)
+	assert.Len(t, agents, 3)
+
+	// Negate existence
+	agents, err = d.ListAgentsPaginated(ctx, db.AgentListParams{
+		TenantID: tid,
+		Limit:    100,
+		Labels:   []db.LabelFilter{{Key: "role", Negate: true}},
+	})
+	require.NoError(t, err)
+	// Only a4 has no role label, but a3 also has no... wait a3 has role:api
+	// Only a4 has no labels at all
+	assert.Len(t, agents, 1)
+	assert.Equal(t, a4.ID, agents[0].ID)
+}
