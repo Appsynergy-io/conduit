@@ -3,11 +3,21 @@
 import { AlertCircle, Fingerprint } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
+import { useForm } from "react-hook-form"
+import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
+import { z } from "zod"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { useAuth } from "@/hooks/use-auth"
 
@@ -27,15 +37,24 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
+const loginSchema = z.object({
+  email: z.string().min(1, "Email is required").email("Enter a valid email address"),
+  password: z.string().min(1, "Password is required"),
+})
+
+type LoginFormValues = z.infer<typeof loginSchema>
+
 export default function LoginPage() {
   const router = useRouter()
   const { login } = useAuth()
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [webauthnAvailable, setWebauthnAvailable] = useState(false)
+
+  const form = useForm<LoginFormValues>({
+    resolver: standardSchemaResolver(loginSchema),
+    defaultValues: { email: "", password: "" },
+  })
 
   useEffect(() => {
     setWebauthnAvailable(
@@ -44,6 +63,7 @@ export default function LoginPage() {
   }, [])
 
   async function handlePasskeyLogin() {
+    const email = form.getValues("email")
     if (!email) {
       setError("Enter your email address first.")
       return
@@ -66,7 +86,6 @@ export default function LoginPage() {
 
       const options = await beginRes.json()
 
-      // Decode base64url fields to ArrayBuffers for the browser API
       const publicKeyOptions: PublicKeyCredentialRequestOptions = {
         ...options.publicKey,
         challenge: base64urlToBuffer(options.publicKey.challenge),
@@ -132,16 +151,14 @@ export default function LoginPage() {
     }
   }
 
-  async function handlePasswordLogin(e: React.FormEvent) {
-    e.preventDefault()
+  async function onPasswordSubmit(values: LoginFormValues) {
     setError(null)
-    setLoading(true)
 
     try {
       const res = await fetch("/api/v1/auth/password/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: values.email, password: values.password }),
       })
 
       if (!res.ok) {
@@ -155,8 +172,6 @@ export default function LoginPage() {
       router.push("/dashboard")
     } catch {
       setError("Unable to reach the server. Check your connection.")
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -168,72 +183,86 @@ export default function LoginPage() {
           <CardDescription>Sign in to your account</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
+          <Form {...form}>
+            <div className="space-y-4">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email webauthn"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@example.com"
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="email"
+                        autoComplete="email webauthn"
+                        placeholder="admin@example.com"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
 
-            {webauthnAvailable && (
-              <Button
-                type="button"
-                className="w-full"
-                disabled={passkeyLoading || loading}
-                onClick={handlePasskeyLogin}
-              >
-                <Fingerprint className="mr-2 h-4 w-4" />
-                {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
-              </Button>
-            )}
+              {webauthnAvailable && (
+                <Button
+                  type="button"
+                  className="w-full"
+                  disabled={passkeyLoading || form.formState.isSubmitting}
+                  onClick={handlePasskeyLogin}
+                >
+                  <Fingerprint className="mr-2 h-4 w-4" />
+                  {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
+                </Button>
+              )}
 
-            <div className="flex items-center gap-3">
-              <Separator className="flex-1" />
-              <span className="text-xs text-muted-foreground">or</span>
-              <Separator className="flex-1" />
-            </div>
-
-            <form onSubmit={handlePasswordLogin} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Setup token"
-                />
+              <div className="flex items-center gap-3">
+                <Separator className="flex-1" />
+                <span className="text-xs text-muted-foreground">or</span>
+                <Separator className="flex-1" />
               </div>
-              <Button
-                type="submit"
-                variant="outline"
-                className="w-full"
-                disabled={loading || passkeyLoading}
-              >
-                {loading ? "Signing in..." : "Sign in with password"}
-              </Button>
-            </form>
 
-            <p className="text-center text-xs text-muted-foreground">
-              Dev mode: use your admin email and setup token as the password.
-            </p>
-          </div>
+              <form onSubmit={form.handleSubmit(onPasswordSubmit)} className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="password"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Password</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="password"
+                          autoComplete="current-password"
+                          placeholder="Setup token"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  className="w-full"
+                  disabled={form.formState.isSubmitting || passkeyLoading}
+                >
+                  {form.formState.isSubmitting ? "Signing in..." : "Sign in with password"}
+                </Button>
+              </form>
+
+              <p className="text-center text-xs text-muted-foreground">
+                Dev mode: use your admin email and setup token as the password.
+              </p>
+            </div>
+          </Form>
         </CardContent>
       </Card>
     </div>

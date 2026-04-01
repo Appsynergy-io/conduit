@@ -80,12 +80,12 @@ Status: `spec-only` | `in-progress` | `done`
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| WebAuthn passkey registration + login (sole production auth) | spec-only | DB, Users |
+| WebAuthn passkey registration + login (sole production auth) | done | DB, Users |
 | Dev-mode password fallback (Argon2id hashed) | done | DB, Users |
 | JWT issuance and validation (Ed25519 signed, short-lived) | done | — |
 | Users + groups + RBAC (platform_owner, org_owner, org_admin, org_member) | done | DB |
-| Account recovery via one-time recovery codes (Argon2id hashed, single-use) | spec-only | Auth, Users, Passkeys |
-| Admin-assisted account recovery (reset user auth state) | spec-only | Auth, Users, RBAC |
+| Account recovery via one-time recovery codes (Argon2id hashed, single-use) | done | Auth, Users, Passkeys |
+| Admin-assisted account recovery (reset user auth state) | done | Auth, Users, RBAC |
 | SAML/OIDC SSO (passkeys remain primary) | spec-only | Auth, Users |
 | CLI browser device flow (passkey → CLI token) | spec-only | Auth, JWT |
 | CLI credential storage (encrypted, per-profile) | spec-only | CLI |
@@ -119,7 +119,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Shell sessions in browser (xterm.js, full feature parity) | done | CWP, Frontend |
 | PTY shell execution on agent (Linux, macOS via creack/pty) | done | Agent |
 | Multiple concurrent shell sessions per agent (multiplexed via CWP) | done | CWP |
-| Terminal session recording + playback (asciicast v2) | spec-only | Shell, DB |
+| Terminal session recording + playback (asciicast v2) | done | Shell, DB |
 
 ### File Management
 
@@ -168,9 +168,9 @@ Status: `spec-only` | `in-progress` | `done`
 |---------|--------|--------------|
 | WebSocket EventBus for live updates — no polling | done | HTTP server |
 | Agent connect/disconnect events push to all browsers | done | EventBus |
-| Shell session start/stop events | spec-only | EventBus, Shell |
+| Shell session start/stop events | done | EventBus, Shell |
 | File operation events | spec-only | EventBus, Files |
-| Auth events (login, logout, session revocation) | spec-only | EventBus, Auth |
+| Auth events (login, logout, session revocation) | done | EventBus, Auth |
 | Agent metrics streaming | spec-only | EventBus, CWP |
 | Channel-based subscriptions (agents, shell, files, auth, audit, metrics, exec, system) | spec-only | EventBus |
 

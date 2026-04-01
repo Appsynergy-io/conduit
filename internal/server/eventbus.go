@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/appsynergy-io/conduit/internal/apierror"
 	"github.com/appsynergy-io/conduit/internal/middleware"
 )
 
@@ -106,20 +107,21 @@ func (eb *EventBus) ClientCount() int {
 // GET /api/v1/events/stream?channels=agents,shell,auth
 func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	if s.eventBus == nil {
-		http.Error(w, "EventBus not configured", http.StatusServiceUnavailable)
+		apierror.Write(w, r, http.StatusServiceUnavailable, "Service Unavailable",
+			"EventBus is not configured.", nil)
 		return
 	}
 
 	// Authenticate via Authorization header or httpOnly cookie (NIST IA-2, OWASP A07)
 	tokenStr := middleware.ExtractToken(r)
 	if tokenStr == "" {
-		http.Error(w, "Missing authentication token", http.StatusUnauthorized)
+		apierror.Unauthorized(w, r, "Authentication required.", nil)
 		return
 	}
 
 	claims, err := s.jwtMgr.ValidateToken(tokenStr)
 	if err != nil {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		apierror.Unauthorized(w, r, "Invalid or expired token.", nil)
 		return
 	}
 

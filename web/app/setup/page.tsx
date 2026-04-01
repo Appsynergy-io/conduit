@@ -3,11 +3,21 @@
 import { AlertCircle, CheckCircle2, Fingerprint, Info } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
+import { useForm } from "react-hook-form"
+import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
+import { z } from "zod"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 
 function base64urlToBuffer(base64url: string): ArrayBuffer {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/")
@@ -25,22 +35,38 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
+const configureSchema = z.object({
+  domain: z.string().min(1, "Domain is required"),
+  organizationName: z.string().min(1, "Organization name is required"),
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
+  adminEmail: z.string().min(1, "Email is required").email("Enter a valid email address"),
+})
+
+type ConfigureFormValues = z.infer<typeof configureSchema>
+
 type Step = "token" | "configure" | "passkey" | "complete"
 
 export default function SetupPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>("token")
   const [setupToken, setSetupToken] = useState("")
-  const [domain, setDomain] = useState("")
-  const [adminEmail, setAdminEmail] = useState("")
-  const [orgName, setOrgName] = useState("")
-  const [firstName, setFirstName] = useState("")
-  const [lastName, setLastName] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [passkeyRegistered, setPasskeyRegistered] = useState(false)
   const [passkeySkipped, setPasskeySkipped] = useState(false)
   const [webauthnAvailable, setWebauthnAvailable] = useState(false)
+
+  const configForm = useForm<ConfigureFormValues>({
+    resolver: standardSchemaResolver(configureSchema),
+    defaultValues: {
+      domain: "",
+      organizationName: "",
+      firstName: "",
+      lastName: "",
+      adminEmail: "",
+    },
+  })
 
   useEffect(() => {
     setWebauthnAvailable(
@@ -48,10 +74,8 @@ export default function SetupPage() {
     )
   }, [])
 
-  async function handleConfigure(e: React.FormEvent) {
-    e.preventDefault()
+  async function onConfigureSubmit(values: ConfigureFormValues) {
     setError(null)
-    setLoading(true)
 
     try {
       const res = await fetch("/api/v1/setup/configure", {
@@ -59,11 +83,7 @@ export default function SetupPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           setupToken,
-          domain,
-          adminEmail,
-          organizationName: orgName,
-          firstName,
-          lastName,
+          ...values,
         }),
       })
 
@@ -77,21 +97,17 @@ export default function SetupPage() {
       const loginRes = await fetch("/api/v1/auth/password/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: adminEmail, password: setupToken }),
+        body: JSON.stringify({ email: values.adminEmail, password: setupToken }),
       })
 
       if (!loginRes.ok) {
-        // Login failed -- skip passkey, go straight to finalization
         await finalizeSetup()
         return
       }
 
-      // Move to passkey registration step
       setStep("passkey")
     } catch {
       setError("Unable to reach the server.")
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -114,7 +130,6 @@ export default function SetupPage() {
 
       const options = await beginRes.json()
 
-      // Decode base64url fields to ArrayBuffers for the browser API
       const publicKeyOptions: PublicKeyCredentialCreationOptions = {
         ...options.publicKey,
         challenge: base64urlToBuffer(options.publicKey.challenge),
@@ -313,7 +328,9 @@ export default function SetupPage() {
                 </Alert>
               )}
               <div className="space-y-2">
-                <Label htmlFor="setupToken">Setup Token</Label>
+                <label htmlFor="setupToken" className="text-sm font-medium leading-none">
+                  Setup Token
+                </label>
                 <Input
                   id="setupToken"
                   type="password"
@@ -334,68 +351,86 @@ export default function SetupPage() {
               </Button>
             </div>
           ) : (
-            <form onSubmit={handleConfigure} className="space-y-4">
-              {error && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="domain">Domain</Label>
-                <Input
-                  id="domain"
-                  required
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                  placeholder="conduit.example.com"
+            <Form {...configForm}>
+              <form onSubmit={configForm.handleSubmit(onConfigureSubmit)} className="space-y-4">
+                {error && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+                <FormField
+                  control={configForm.control}
+                  name="domain"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Domain</FormLabel>
+                      <FormControl>
+                        <Input placeholder="conduit.example.com" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="orgName">Organization Name</Label>
-                <Input
-                  id="orgName"
-                  required
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  placeholder="Acme Corp"
+                <FormField
+                  control={configForm.control}
+                  name="organizationName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Organization Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Acme Corp" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
-                  <Input
-                    id="firstName"
-                    required
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={configForm.control}
+                    name="firstName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>First Name</FormLabel>
+                        <FormControl>
+                          <Input {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={configForm.control}
+                    name="lastName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Last Name</FormLabel>
+                        <FormControl>
+                          <Input {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
-                  <Input
-                    id="lastName"
-                    required
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="adminEmail">Admin Email</Label>
-                <Input
-                  id="adminEmail"
-                  type="email"
-                  required
-                  value={adminEmail}
-                  onChange={(e) => setAdminEmail(e.target.value)}
-                  placeholder="admin@example.com"
+                <FormField
+                  control={configForm.control}
+                  name="adminEmail"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Admin Email</FormLabel>
+                      <FormControl>
+                        <Input type="email" placeholder="admin@example.com" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Setting up..." : "Complete Setup"}
-              </Button>
-            </form>
+                <Button type="submit" className="w-full" disabled={configForm.formState.isSubmitting}>
+                  {configForm.formState.isSubmitting ? "Setting up..." : "Complete Setup"}
+                </Button>
+              </form>
+            </Form>
           )}
         </CardContent>
       </Card>

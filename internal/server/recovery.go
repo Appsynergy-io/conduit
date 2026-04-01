@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -96,7 +95,7 @@ type recoveryVerifyRequest struct {
 // OWASP A07: Identical error for all failure modes (no enumeration).
 func (s *Server) handleVerifyRecoveryCode(w http.ResponseWriter, r *http.Request) {
 	var req recoveryVerifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONStrict(r, &req); err != nil {
 		apierror.BadRequest(w, r, "Invalid request body.", err)
 		return
 	}
