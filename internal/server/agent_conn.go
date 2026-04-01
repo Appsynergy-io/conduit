@@ -275,6 +275,7 @@ func (s *Server) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 	s.runAgentLoop(ctx, connAgent, readErr)
 
 	// Agent disconnected — cleanup
+	s.sessionMgr.CleanupAgentSessions(ctx, agent.ID)
 	s.agentRegistry.Unregister(agent.ID)
 	s.db.UpdateAgentStatus(ctx, agent.ID, "offline")
 
