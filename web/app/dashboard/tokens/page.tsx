@@ -2,6 +2,19 @@
 
 import { Check, Copy, KeyRound, Plus, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
+import { useForm } from "react-hook-form"
+import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
+import { z } from "zod"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,6 +26,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -32,6 +54,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useAuth } from "@/hooks/use-auth"
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface JoinToken {
   id: string
@@ -54,6 +80,50 @@ interface Platform {
 
 type SelectedOS = "linux" | "darwin" | "windows"
 
+// ---------------------------------------------------------------------------
+// Zod schema for the create token form
+// ---------------------------------------------------------------------------
+
+const createTokenSchema = z.object({
+  name: z
+    .string()
+    .min(1, "Name is required")
+    .max(100, "Name must be 100 characters or fewer")
+    .regex(
+      /^[a-zA-Z0-9][a-zA-Z0-9 _\-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/,
+      "Name must start and end with alphanumeric characters"
+    ),
+  type: z.enum(["single_use", "persistent"]),
+  ttlHours: z.coerce.number().int().min(1, "Minimum 1 hour").max(8760, "Maximum 8760 hours (1 year)"),
+  labels: z.string().optional(),
+})
+
+type CreateTokenValues = z.infer<typeof createTokenSchema>
+
+// ---------------------------------------------------------------------------
+// Copy button with independent state
+// ---------------------------------------------------------------------------
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <Button variant="ghost" size="icon" className="absolute right-2 top-2 h-7 w-7" onClick={handleCopy}>
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+    </Button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
 export default function TokensPage() {
   const { isAuthenticated } = useAuth()
   const [tokens, setTokens] = useState<JoinToken[]>([])
@@ -64,15 +134,22 @@ export default function TokensPage() {
   const [platforms, setPlatforms] = useState<Platform[]>([])
   const [installScriptURL, setInstallScriptURL] = useState("")
   const [selectedOS, setSelectedOS] = useState<SelectedOS>("linux")
-  const [copied, setCopied] = useState(false)
-
-  // Create form state
-  const [name, setName] = useState("")
-  const [tokenType, setTokenType] = useState("single_use")
-  const [ttlHours, setTtlHours] = useState("24")
-  const [labelsInput, setLabelsInput] = useState("")
-  const [creating, setCreating] = useState(false)
+  const [revokeTarget, setRevokeTarget] = useState<JoinToken | null>(null)
   const [createError, setCreateError] = useState("")
+
+  const form = useForm<CreateTokenValues>({
+    resolver: standardSchemaResolver(createTokenSchema),
+    defaultValues: {
+      name: "",
+      type: "single_use",
+      ttlHours: 24,
+      labels: "",
+    },
+  })
+
+  // ---------------------------------------------------------------------------
+  // Data fetching
+  // ---------------------------------------------------------------------------
 
   const fetchTokens = useCallback(async () => {
     if (!isAuthenticated) return
@@ -88,6 +165,7 @@ export default function TokensPage() {
   }, [isAuthenticated])
 
   const fetchPlatforms = useCallback(async () => {
+    if (!isAuthenticated) return
     try {
       const res = await fetch("/api/v1/download/agent/platforms")
       if (res.ok) {
@@ -98,68 +176,66 @@ export default function TokensPage() {
     } catch {
       // Non-critical — install commands still work with manual download
     }
-  }, [])
+  }, [isAuthenticated])
 
   useEffect(() => {
     fetchTokens()
     fetchPlatforms()
   }, [fetchTokens, fetchPlatforms])
 
-  const handleCreate = async () => {
-    setCreating(true)
+  // ---------------------------------------------------------------------------
+  // Actions
+  // ---------------------------------------------------------------------------
+
+  const handleCreate = async (values: CreateTokenValues) => {
     setCreateError("")
 
     const labels: Record<string, string> = {}
-    if (labelsInput.trim()) {
-      for (const pair of labelsInput.split(",")) {
+    if (values.labels?.trim()) {
+      for (const pair of values.labels.split(",")) {
         const [k, v] = pair.split("=").map((s) => s.trim())
         if (k && v) labels[k] = v
       }
     }
 
     const body: Record<string, unknown> = {
-      name,
-      type: tokenType,
-      ttlHours: Number.parseInt(ttlHours, 10) || 24,
+      name: values.name,
+      type: values.type,
+      ttlHours: values.ttlHours,
     }
     if (Object.keys(labels).length > 0) body.labels = labels
 
-    try {
-      const res = await fetch("/api/v1/agents/tokens", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
+    const res = await fetch("/api/v1/agents/tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
 
-      if (res.ok) {
-        const data = await res.json()
-        setCreatedToken(data.token)
-        setShowCreate(false)
-        setShowInstall(true)
-        setName("")
-        setLabelsInput("")
-        fetchTokens()
-      } else {
-        const err = await res.json().catch(() => ({ detail: "Failed to create token." }))
-        setCreateError(err.detail ?? "Failed to create token.")
-      }
-    } finally {
-      setCreating(false)
+    if (res.ok) {
+      const data = await res.json()
+      setCreatedToken(data.token)
+      setShowCreate(false)
+      setShowInstall(true)
+      form.reset()
+      fetchTokens()
+    } else {
+      const err = await res.json().catch(() => ({ detail: "Failed to create token." }))
+      setCreateError(err.detail ?? "Failed to create token.")
     }
   }
 
-  const handleRevoke = async (id: string) => {
-    const res = await fetch(`/api/v1/agents/tokens/${id}`, { method: "DELETE" })
+  const handleRevoke = async () => {
+    if (!revokeTarget) return
+    const res = await fetch(`/api/v1/agents/tokens/${revokeTarget.id}`, { method: "DELETE" })
     if (res.ok || res.status === 204) {
       fetchTokens()
     }
+    setRevokeTarget(null)
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  // ---------------------------------------------------------------------------
+  // Install command helpers
+  // ---------------------------------------------------------------------------
 
   const getInstallCommand = (os: SelectedOS): string => {
     if (!createdToken) return ""
@@ -169,13 +245,10 @@ export default function TokensPage() {
       return `curl -sSL ${installScriptURL} | sh -s --${insecureFlag} ${createdToken}`
     }
 
-    // Fallback: manual download + join
     const baseURL = window.location.origin
-    const arch = "amd64"
-    const ext = os === "windows" ? ".exe" : ""
     const binary = os === "windows" ? "conduit.exe" : "conduit"
     return [
-      `curl -sSL -o ${binary} "${baseURL}/api/v1/download/agent?os=${os}&arch=${arch}"`,
+      `curl -sSL -o ${binary} "${baseURL}/api/v1/download/agent?os=${os}&arch=amd64"`,
       os !== "windows" ? `chmod +x ${binary}` : "",
       `${os === "windows" ? ".\\" : "./"}${binary} join ${baseURL} ${createdToken}`,
     ]
@@ -198,6 +271,10 @@ export default function TokensPage() {
   const hasPlatform = (os: string): boolean => {
     return platforms.some((p) => p.os === os)
   }
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="space-y-6">
@@ -289,7 +366,7 @@ export default function TokensPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleRevoke(t.id)}
+                          onClick={() => setRevokeTarget(t)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -303,8 +380,34 @@ export default function TokensPage() {
         </div>
       )}
 
-      {/* Create token dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      {/* Revoke confirmation dialog (OWASP — blocking confirmation for destructive actions) */}
+      <AlertDialog open={!!revokeTarget} onOpenChange={(open) => { if (!open) setRevokeTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke join token?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently revoke <strong>{revokeTarget?.name}</strong>. Machines that
+              haven&apos;t joined yet will no longer be able to use this token. Already-joined
+              agents are unaffected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={handleRevoke}>
+              Revoke Token
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Create token dialog with react-hook-form + zod */}
+      <Dialog open={showCreate} onOpenChange={(open) => {
+        setShowCreate(open)
+        if (!open) {
+          form.reset()
+          setCreateError("")
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create Join Token</DialogTitle>
@@ -312,62 +415,82 @@ export default function TokensPage() {
               Generate a token to enroll machines as Conduit agents.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="token-name">Name</Label>
-              <Input
-                id="token-name"
-                placeholder="e.g. Production servers"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                maxLength={100}
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleCreate)} className="space-y-4 py-2">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g. Production servers" maxLength={100} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="token-type">Type</Label>
-              <Select value={tokenType} onValueChange={setTokenType}>
-                <SelectTrigger id="token-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="single_use">Single use (one machine)</SelectItem>
-                  <SelectItem value="persistent">Persistent (multiple machines)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="token-ttl">Expires in (hours)</Label>
-              <Input
-                id="token-ttl"
-                type="number"
-                min={1}
-                max={8760}
-                value={ttlHours}
-                onChange={(e) => setTtlHours(e.target.value)}
+              <FormField
+                control={form.control}
+                name="type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Type</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="single_use">Single use (one machine)</SelectItem>
+                        <SelectItem value="persistent">Persistent (multiple machines)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="token-labels">Labels (optional)</Label>
-              <Input
-                id="token-labels"
-                placeholder="env=production, role=web, dc=us-east-1"
-                value={labelsInput}
-                onChange={(e) => setLabelsInput(e.target.value)}
+              <FormField
+                control={form.control}
+                name="ttlHours"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Expires in (hours)</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={1} max={8760} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-              <p className="text-xs text-muted-foreground">
-                Comma-separated key=value pairs. Applied to agents on join.
-              </p>
-            </div>
-            {createError && <p className="text-sm text-destructive">{createError}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreate} disabled={!name.trim() || creating}>
-              {creating ? "Creating..." : "Create Token"}
-            </Button>
-          </DialogFooter>
+              <FormField
+                control={form.control}
+                name="labels"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Labels (optional)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="env=production, role=web, dc=us-east-1" {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      Comma-separated key=value pairs. Applied to agents on join.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {createError && <p className="text-sm text-destructive">{createError}</p>}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? "Creating..." : "Create Token"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
 
@@ -426,14 +549,7 @@ export default function TokensPage() {
                   <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-12 font-mono text-xs leading-relaxed">
                     {getInstallCommand(selectedOS)}
                   </pre>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-2 h-7 w-7"
-                    onClick={() => copyToClipboard(getInstallCommand(selectedOS))}
-                  >
-                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  </Button>
+                  <CopyButton text={getInstallCommand(selectedOS)} />
                 </div>
               </CardContent>
             </Card>
@@ -451,14 +567,7 @@ export default function TokensPage() {
                   <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-12 font-mono text-xs leading-relaxed">
                     {getManualJoinCommand()}
                   </pre>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-2 h-7 w-7"
-                    onClick={() => copyToClipboard(getManualJoinCommand())}
-                  >
-                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  </Button>
+                  <CopyButton text={getManualJoinCommand()} />
                 </div>
               </CardContent>
             </Card>
@@ -470,14 +579,7 @@ export default function TokensPage() {
                 <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-12 font-mono text-xs">
                   {createdToken}
                 </pre>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-2 top-2 h-7 w-7"
-                  onClick={() => copyToClipboard(createdToken ?? "")}
-                >
-                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                </Button>
+                <CopyButton text={createdToken ?? ""} />
               </div>
             </div>
           </div>
