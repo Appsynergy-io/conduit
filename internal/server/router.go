@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/appsynergy-io/conduit/internal/apierror"
 	"github.com/appsynergy-io/conduit/internal/db"
 	"github.com/appsynergy-io/conduit/internal/middleware"
 	"github.com/appsynergy-io/conduit/internal/protocol"
@@ -27,31 +28,32 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	// Authenticate via Authorization header or httpOnly cookie (NIST IA-2, OWASP A07)
 	tokenStr := middleware.ExtractToken(r)
 	if tokenStr == "" {
-		http.Error(w, "Missing authentication token", http.StatusUnauthorized)
+		apierror.Unauthorized(w, r, "Authentication required.", nil)
 		return
 	}
 
 	claims, err := s.jwtMgr.ValidateToken(tokenStr)
 	if err != nil {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		apierror.Unauthorized(w, r, "Invalid or expired token.", nil)
 		return
 	}
 
 	// Verify agent exists and belongs to this tenant
 	agent, err := s.db.GetAgentByID(r.Context(), agentID)
 	if err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		apierror.Internal(w, r, err)
 		return
 	}
 	if agent == nil || agent.TenantID != claims.TenantID {
-		http.Error(w, "Agent not found", http.StatusNotFound)
+		apierror.NotFound(w, r, "Agent not found.", nil)
 		return
 	}
 
 	// Verify agent is connected
 	connAgent := s.agentRegistry.Get(agentID)
 	if connAgent == nil {
-		http.Error(w, "Agent is not connected", http.StatusServiceUnavailable)
+		apierror.Write(w, r, http.StatusServiceUnavailable, "Service Unavailable",
+			"Agent is not connected.", nil)
 		return
 	}
 

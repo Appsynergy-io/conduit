@@ -113,7 +113,7 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req configureRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONStrict(r, &req); err != nil {
 		apierror.BadRequest(w, r, "Invalid request body.", err)
 		return
 	}
@@ -242,7 +242,7 @@ func (s *Server) handleSetupPasskey(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			SetupToken string `json:"setupToken"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := decodeJSONStrict(r, &req); err != nil {
 			apierror.BadRequest(w, r, "Invalid request body.", err)
 			return
 		}

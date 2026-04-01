@@ -34,6 +34,8 @@ type Server struct {
 	frontendFS       fs.FS
 	webAuthn         *webauthn.WebAuthn
 	webAuthnSessions *auth.WebAuthnSessionStore
+	authLimiter      *middleware.RateLimiter
+	setupLimiter     *middleware.RateLimiter
 }
 
 // New creates a Server with all dependencies wired.
@@ -49,6 +51,17 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 		webhooks:         NewWebhookDeliverer(database, logger),
 		frontendFS:       frontendFS,
 		webAuthnSessions: auth.NewWebAuthnSessionStore(),
+		// Rate limiters (OWASP A07, API2, API4 — anti-brute-force)
+		authLimiter: middleware.NewRateLimiter(middleware.RateLimitConfig{
+			Rate:     100,
+			Interval: 1 * time.Hour,
+			Burst:    20,
+		}),
+		setupLimiter: middleware.NewRateLimiter(middleware.RateLimitConfig{
+			Rate:     20,
+			Interval: 1 * time.Hour,
+			Burst:    10,
+		}),
 	}
 	s.initWebAuthn()
 	s.router = s.buildRouter()
@@ -121,13 +134,16 @@ func (s *Server) buildRouter() chi.Router {
 
 		// Setup wizard (public, no auth — only works before setup is complete)
 		r.Group(func(r chi.Router) {
+			r.Use(middleware.RateLimit(s.setupLimiter))
 			r.Get("/setup/status", s.handleSetupStatus)
 			r.Post("/setup/configure", s.handleSetupConfigure)
 			r.Post("/setup/passkey", s.handleSetupPasskey)
 		})
 
 		// Public auth endpoints (no JWT required)
+		// Rate limited: max 100 requests/hour per IP (OWASP A07, API2 — anti-brute-force)
 		r.Group(func(r chi.Router) {
+			r.Use(middleware.RateLimit(s.authLimiter))
 			r.Post("/auth/password/login", s.handlePasswordLogin)
 			r.Post("/auth/webauthn/login/begin", s.handleWebAuthnLoginBegin)
 			r.Post("/auth/webauthn/login/finish", s.handleWebAuthnLoginFinish)
