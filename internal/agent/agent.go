@@ -191,6 +191,14 @@ func (a *Agent) handleFrame(ctx context.Context, mux *protocol.Mux, f *protocol.
 		}
 		a.resizeShell(f.StreamID, &payload)
 
+	case protocol.FrameExecStart:
+		var payload protocol.ExecStartPayload
+		if err := protocol.UnmarshalPayload(f.Payload, &payload); err != nil {
+			a.logger.Warn("invalid EXEC_START payload", "error", err)
+			return
+		}
+		a.startExec(ctx, mux, f.StreamID, &payload)
+
 	case protocol.FrameFileList, protocol.FrameFileRead, protocol.FrameFileWrite,
 		protocol.FrameFileStat, protocol.FrameFileDelete, protocol.FrameFileRename, protocol.FrameFileMkdir:
 		a.handleFileFrame(ctx, mux, f)

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -36,6 +37,8 @@ type Server struct {
 	webAuthnSessions *auth.WebAuthnSessionStore
 	authLimiter      *middleware.RateLimiter
 	setupLimiter     *middleware.RateLimiter
+	execJobs         map[string]context.CancelFunc
+	execJobsMu       sync.Mutex
 }
 
 // New creates a Server with all dependencies wired.
@@ -62,6 +65,7 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 			Interval: 1 * time.Hour,
 			Burst:    10,
 		}),
+		execJobs: make(map[string]context.CancelFunc),
 	}
 	s.initWebAuthn()
 	s.router = s.buildRouter()
@@ -227,6 +231,11 @@ func (s *Server) buildRouter() chi.Router {
 				r.Get("/agents/tokens", s.handleListJoinTokens)
 				r.Post("/agents/tokens", s.handleCreateJoinToken)
 				r.Delete("/agents/tokens/{tokenId}", s.handleRevokeJoinToken)
+
+				// Bulk exec
+				r.Post("/exec", s.handleBulkExec)
+				r.Get("/exec/{jobId}", s.handleGetBulkExecJob)
+				r.Post("/exec/{jobId}/cancel", s.handleCancelBulkExec)
 
 				// Shell recordings
 				r.Get("/recordings", s.handleListRecordings)
