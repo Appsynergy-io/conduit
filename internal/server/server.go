@@ -208,7 +208,11 @@ func (s *Server) buildRouter() chi.Router {
 				// Agents
 				r.Get("/agents", s.handleListAgents)
 				r.Get("/agents/{agentId}", s.handleGetAgent)
+				r.Patch("/agents/{agentId}", s.handleUpdateAgent)
 				r.Delete("/agents/{agentId}", s.handleDeleteAgent)
+
+				// Labels
+				r.Get("/labels", s.handleListLabels)
 
 				// Agent file operations
 				r.Get("/agents/{agentId}/files", s.handleListFiles)

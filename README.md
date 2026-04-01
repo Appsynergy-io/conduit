@@ -109,7 +109,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Agent auto-update with rollback (signed binary push) | spec-only | Agent, Binary Signing |
 | Full host visibility per agent: CPU, memory, disk, network, services, ports | in-progress | CWP |
 | Agent metrics collection (CPU, RAM, disk, load, uptime — `AGENT_INFO` frames) | done | CWP |
-| Universal resource labelling system for surgical targeting | spec-only | DB |
+| Universal resource labelling system for surgical targeting | done | DB |
 | Agent installed as system service (systemd / launchd / Windows) via `conduit join` | done | Agent |
 
 ### Shell & Terminal
