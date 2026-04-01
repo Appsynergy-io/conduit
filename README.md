@@ -135,9 +135,10 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| CLI binary (`conduit`) — agent daemon, join, uninstall, token, shell subcommands | 🟡 in-progress | Auth, CWP |
-| CLI runs as full TUI (bubbletea) when no arguments given | ❌ spec-only | CLI |
+| CLI binary (`conduit`) — agent daemon, join, uninstall, token, shell subcommands | ✅ done | Auth, CWP |
+| CLI runs as full TUI (bubbletea) when no arguments given | ✅ done | CLI |
 | CLI-only mode on personal devices (zero daemons, zero listeners) | ❌ spec-only | CLI |
+| CLI shell — `conduit shell <agent>` direct shell without TUI | ✅ done | CLI, CWP |
 | CLI exec commands — bulk exec from terminal | ❌ spec-only | CLI, Bulk Exec |
 | CLI group, user, audit management commands | ❌ spec-only | CLI, Auth |
 | CLI lights-out basic (reboot/poweroff via agent) | ❌ spec-only | CLI, CWP |

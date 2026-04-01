@@ -104,7 +104,7 @@ type CreateTokenValues = z.infer<typeof createTokenSchema>
 // Copy button with independent state
 // ---------------------------------------------------------------------------
 
-function CopyButton({ text }: { text: string }) {
+function CodeBlock({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
@@ -114,9 +114,16 @@ function CopyButton({ text }: { text: string }) {
   }
 
   return (
-    <Button variant="ghost" size="icon" className="absolute right-2 top-2 h-7 w-7" onClick={handleCopy}>
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-    </Button>
+    <div className="overflow-hidden rounded-md bg-muted">
+      <div className="flex items-start justify-between gap-2 p-3">
+        <pre className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-xs leading-relaxed">
+          {text}
+        </pre>
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={handleCopy}>
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -513,14 +520,14 @@ export default function TokensPage() {
           if (!open) setCreatedToken(null)
         }}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Install Agent</DialogTitle>
             <DialogDescription>
               Copy the command below to install and register the agent on your machine.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 overflow-y-auto py-2">
             {/* OS Selector */}
             <div className="space-y-2">
               <Label>Operating System</Label>
@@ -556,12 +563,7 @@ export default function TokensPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="relative">
-                  <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-12 font-mono text-xs leading-relaxed">
-                    {getInstallCommand(selectedOS)}
-                  </pre>
-                  <CopyButton text={getInstallCommand(selectedOS)} />
-                </div>
+                <CodeBlock text={getInstallCommand(selectedOS)} />
               </CardContent>
             </Card>
 
@@ -574,24 +576,14 @@ export default function TokensPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="relative">
-                  <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-12 font-mono text-xs leading-relaxed">
-                    {getManualJoinCommand()}
-                  </pre>
-                  <CopyButton text={getManualJoinCommand()} />
-                </div>
+                <CodeBlock text={getManualJoinCommand()} />
               </CardContent>
             </Card>
 
             {/* Raw token (for reference) */}
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Raw token (shown once)</Label>
-              <div className="relative">
-                <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-12 font-mono text-xs">
-                  {createdToken}
-                </pre>
-                <CopyButton text={createdToken ?? ""} />
-              </div>
+              <CodeBlock text={createdToken ?? ""} />
             </div>
           </div>
           <DialogFooter>
