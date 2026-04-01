@@ -316,6 +316,9 @@ tags:
     description: |
       Terminal shell sessions in browser and CLI. PTY execution on agents.
       Multiple concurrent sessions via CWP multiplexing. Session recording.
+      Persistent sessions survive browser disconnect and are resumable from
+      any platform. Pin mode keeps sessions alive indefinitely for monitoring
+      long-running tasks. NIST AC-12, AU-2, AU-3.
     x-service: remote-access
   - name: Files
     description: |
@@ -3343,15 +3346,34 @@ paths:
   /agents/{agentId}/shell/sessions:
     get:
       operationId: listShellSessions
-      summary: List active shell sessions on agent
+      summary: List shell sessions on agent
+      description: |
+        Lists shell sessions for the specified agent. Includes active, detached,
+        and optionally closed sessions. Detached sessions are resumable from any
+        browser or platform.
+
+        **NIST AU-2:** Session listing provides visibility into active access.
+        **NIST AC-3:** Only sessions owned by the requesting user or visible to
+        users with org_admin+ role are returned.
       tags: [Shell]
-      x-nist-controls: [AU-2]
+      x-nist-controls: [AU-2, AC-3]
       x-owasp: [A01, API1, API3]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
+        - name: status
+          in: query
+          description: Filter by session status. Omit to return active + detached.
+          schema:
+            type: string
+            enum: [active, detached, closed, all]
+        - name: pinned
+          in: query
+          description: Filter by pinned status
+          schema:
+            type: boolean
       responses:
         "200":
-          description: Active shell sessions
+          description: Shell sessions
           content:
             application/json:
               schema:
@@ -3376,10 +3398,18 @@ paths:
         Multiple concurrent sessions per agent are supported via CWP multiplexing.
         Session data flows over the WebSocket at `/agents/{agentId}/shell/sessions/{sessionId}/ws`.
 
+        Sessions are persistent by default — if the browser disconnects, the PTY
+        remains alive on the agent and the session enters `detached` status.
+        Reconnect from any platform via the attach WebSocket endpoint.
+
+        Set `pinned: true` for sessions monitoring long-running background tasks
+        that must remain accessible indefinitely regardless of idle timeout.
+
         **NIST AU-2, AU-3:** Shell session start logged with user, agent, timestamp.
+        **NIST AC-12:** Idle timeout enforced on detached sessions (unless pinned).
         **x-audit-event:** shell.session.started
       tags: [Shell]
-      x-nist-controls: [AU-2, AU-3]
+      x-nist-controls: [AU-2, AU-3, AC-12]
       x-owasp: [A01, A03, API1, API5]
       x-audit-event: shell.session.started
       parameters:
@@ -3410,6 +3440,20 @@ paths:
                   type: boolean
                   default: true
                   description: Enable terminal session recording (asciicast v2)
+                pinned:
+                  type: boolean
+                  default: false
+                  description: |
+                    Pin session to prevent idle timeout. Pinned sessions stay alive
+                    indefinitely when detached. Use for monitoring long-running tasks.
+                idleTimeout:
+                  type: integer
+                  minimum: 60
+                  maximum: 86400
+                  default: 3600
+                  description: |
+                    Seconds of detached inactivity before automatic closure.
+                    Ignored when pinned is true. Minimum 60 seconds.
               additionalProperties: false
       responses:
         "201":
@@ -3428,9 +3472,95 @@ paths:
           description: Concurrent session limit reached
 
   /agents/{agentId}/shell/sessions/{sessionId}:
+    get:
+      operationId: getShellSession
+      summary: Get shell session details
+      description: |
+        Returns the current state of a shell session including attach status,
+        pin mode, and idle timeout configuration.
+
+        **NIST AC-3:** Only session owner or org_admin+ can view.
+      tags: [Shell]
+      x-nist-controls: [AC-3, AU-2]
+      x-owasp: [A01, API1, API3]
+      parameters:
+        - $ref: "#/components/parameters/PathAgentId"
+        - $ref: "#/components/parameters/PathSessionId"
+      responses:
+        "200":
+          description: Shell session details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShellSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateShellSession
+      summary: Update shell session settings
+      description: |
+        Updates session settings — pin/unpin, idle timeout. Only the session
+        owner or org_admin+ can modify a session.
+
+        Pinning a session disables idle timeout, keeping the PTY alive
+        indefinitely until explicit termination. Use for long-running
+        background tasks that must be monitored across platforms.
+
+        **NIST AC-12:** Idle timeout changes enforce session termination policy.
+        **NIST AC-3:** Ownership-enforced modification.
+        **x-audit-event:** shell.session.updated
+      tags: [Shell]
+      x-nist-controls: [AC-12, AC-3, AU-12]
+      x-owasp: [A01, API1, API3, API5]
+      x-audit-event: shell.session.updated
+      parameters:
+        - $ref: "#/components/parameters/PathAgentId"
+        - $ref: "#/components/parameters/PathSessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pinned:
+                  type: boolean
+                  description: Pin or unpin the session
+                idleTimeout:
+                  type: integer
+                  minimum: 60
+                  maximum: 86400
+                  description: Update idle timeout in seconds (ignored when pinned)
+              additionalProperties: false
+      responses:
+        "200":
+          description: Session updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShellSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       operationId: terminateShellSession
       summary: Terminate a shell session
+      description: |
+        Terminates a shell session regardless of its current state (active,
+        detached, or pinned). Sends SHELL_EXIT to the agent, closes the PTY,
+        saves the recording, and marks the session as closed.
+
+        **NIST AC-12:** Explicit session termination.
+        **x-audit-event:** shell.session.terminated
       tags: [Shell]
       x-nist-controls: [AC-12, AU-12]
       x-owasp: [A01, API1, API5]
@@ -3451,36 +3581,56 @@ paths:
   /agents/{agentId}/shell/sessions/{sessionId}/ws:
     get:
       operationId: shellWebSocket
-      summary: WebSocket for shell session data
+      summary: Attach to shell session via WebSocket
       description: |
-        Upgrades to WebSocket for bidirectional shell I/O.
-        Client sends keystrokes, server sends terminal output.
-        Uses xterm.js in browser with full feature parity.
+        Upgrades to WebSocket and attaches to a shell session for bidirectional
+        terminal I/O. Works for both new sessions (status: active) and
+        resuming detached sessions.
+
+        **Attach flow:**
+        1. Client connects to this endpoint with a valid JWT
+        2. Server verifies session ownership (NIST AC-3)
+        3. If session is detached: replays buffered output, transitions to active
+        4. Terminal I/O flows bidirectionally
+
+        **Detach flow:**
+        When the WebSocket closes (browser navigates away, network drop, explicit
+        detach), the session transitions to `detached` status. The PTY remains
+        alive on the agent and output is buffered in a ring buffer on the server.
+        The session can be resumed from any platform by connecting to this
+        endpoint again.
+
+        **Pinned sessions:** Sessions with `pinned: true` never idle-timeout
+        while detached. Non-pinned sessions close after `idleTimeout` seconds
+        of detached inactivity.
 
         **CWP frames:** SHELL_DATA (I/O), SHELL_RESIZE (terminal resize).
 
         **Inbound messages:**
-        - `{"type": "input", "data": "<base64>"}` — keyboard input
+        - Binary data — raw terminal input (keystrokes)
         - `{"type": "resize", "cols": 120, "rows": 40}` — terminal resize
 
         **Outbound messages:**
-        - `{"type": "output", "data": "<base64>"}` — terminal output
-        - `{"type": "exit", "code": 0}` — session ended
+        - Binary data — raw terminal output
+        - `{"type": "exit", "code": 0}` — session ended (PTY exited)
+        - `{"type": "detached"}` — session detached (informational, sent before close)
       tags: [Shell]
-      x-nist-controls: [AU-2, AU-3]
+      x-nist-controls: [AU-2, AU-3, AC-3, AC-12]
       x-owasp: [A01, A03, API1]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - $ref: "#/components/parameters/PathSessionId"
       responses:
         "101":
-          description: WebSocket connection established
+          description: WebSocket connection established, session attached
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Session already has an active attachment (only one browser at a time)
 
   /agents/{agentId}/shell/sessions/{sessionId}/resize:
     post:
@@ -3522,6 +3672,63 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /shell/sessions:
+    get:
+      operationId: listAllShellSessions
+      summary: List shell sessions across all agents
+      description: |
+        Lists shell sessions across all agents for the current tenant.
+        Returns active and detached sessions by default. Useful for the
+        session management panel — shows all resumable sessions regardless
+        of which agent they belong to.
+
+        **NIST AC-3:** Users see only their own sessions unless org_admin+.
+        **NIST AU-2:** Session listing logged for audit visibility.
+      tags: [Shell]
+      x-nist-controls: [AC-3, AU-2]
+      x-owasp: [A01, API1, API3]
+      parameters:
+        - name: status
+          in: query
+          description: Filter by session status. Omit to return active + detached.
+          schema:
+            type: string
+            enum: [active, detached, closed, all]
+        - name: pinned
+          in: query
+          description: Filter by pinned status
+          schema:
+            type: boolean
+        - name: agentId
+          in: query
+          description: Filter by specific agent
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: query
+          description: Filter by specific user (org_admin+ only)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Shell sessions across all agents
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ShellSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /shell/recordings:
     get:
@@ -4582,7 +4789,7 @@ paths:
 
         **Channels:**
         - `agents` — agent connections, disconnections, status changes
-        - `shell` — shell session lifecycle
+        - `shell` — shell session lifecycle (started, detached, attached, idle_timeout, terminated)
         - `files` — file operation completions
         - `auth` — login/logout events
         - `audit` — all audit events (requires audit:read permission)
@@ -5040,6 +5247,128 @@ webhooks:
                         agentId:
                           type: string
                           format: uuid
+      responses:
+        "200":
+          description: Acknowledged
+
+  shell.session.detached:
+    post:
+      operationId: onShellSessionDetached
+      summary: Shell session detached (browser disconnected)
+      tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12, AC-12]
+      x-owasp: [A09, API1]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEventId"
+        - $ref: "#/components/parameters/WebhookTimestamp"
+        - $ref: "#/components/parameters/WebhookSignature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/WebhookEvent"
+                - type: object
+                  properties:
+                    eventType:
+                      const: shell.session.detached
+                    data:
+                      type: object
+                      required: [sessionId, userId, agentId, pinned]
+                      properties:
+                        sessionId:
+                          type: string
+                          format: uuid
+                        userId:
+                          type: string
+                          format: uuid
+                        agentId:
+                          type: string
+                          format: uuid
+                        pinned:
+                          type: boolean
+      responses:
+        "200":
+          description: Acknowledged
+
+  shell.session.attached:
+    post:
+      operationId: onShellSessionAttached
+      summary: Shell session attached (browser reconnected)
+      tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12]
+      x-owasp: [A09, API1]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEventId"
+        - $ref: "#/components/parameters/WebhookTimestamp"
+        - $ref: "#/components/parameters/WebhookSignature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/WebhookEvent"
+                - type: object
+                  properties:
+                    eventType:
+                      const: shell.session.attached
+                    data:
+                      type: object
+                      required: [sessionId, userId, agentId]
+                      properties:
+                        sessionId:
+                          type: string
+                          format: uuid
+                        userId:
+                          type: string
+                          format: uuid
+                        agentId:
+                          type: string
+                          format: uuid
+      responses:
+        "200":
+          description: Acknowledged
+
+  shell.session.idle_timeout:
+    post:
+      operationId: onShellSessionIdleTimeout
+      summary: Shell session closed due to idle timeout
+      tags: [Webhooks]
+      x-nist-controls: [AU-2, AU-3, AU-12, AC-12]
+      x-owasp: [A09, API1]
+      parameters:
+        - $ref: "#/components/parameters/WebhookEventId"
+        - $ref: "#/components/parameters/WebhookTimestamp"
+        - $ref: "#/components/parameters/WebhookSignature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/WebhookEvent"
+                - type: object
+                  properties:
+                    eventType:
+                      const: shell.session.idle_timeout
+                    data:
+                      type: object
+                      required: [sessionId, userId, agentId, detachedDuration]
+                      properties:
+                        sessionId:
+                          type: string
+                          format: uuid
+                        userId:
+                          type: string
+                          format: uuid
+                        agentId:
+                          type: string
+                          format: uuid
+                        detachedDuration:
+                          type: integer
+                          description: Seconds the session was detached before timeout
       responses:
         "200":
           description: Acknowledged
@@ -6475,7 +6804,7 @@ components:
 
     ShellSession:
       type: object
-      required: [id, agentId, userId, status, createdAt]
+      required: [id, agentId, userId, status, pinned, createdAt]
       properties:
         id:
           type: string
@@ -6486,9 +6815,20 @@ components:
         userId:
           type: string
           format: uuid
+        agentHostname:
+          type: string
+          description: Hostname of the agent (denormalized for display)
+        userEmail:
+          type: string
+          format: email
+          description: Email of the session owner (denormalized for display)
         status:
           type: string
-          enum: [active, closed]
+          enum: [active, detached, closed]
+          description: |
+            - `active` — browser attached, I/O flowing
+            - `detached` — no browser attached, PTY alive on agent, output buffered
+            - `closed` — PTY exited or session terminated
         shell:
           type: string
         cols:
@@ -6497,12 +6837,35 @@ components:
           type: integer
         recording:
           type: boolean
+        pinned:
+          type: boolean
+          default: false
+          description: |
+            Pinned sessions never idle-timeout. Use for monitoring long-running
+            background tasks that must remain accessible from any platform.
+            NIST AC-12: pinned sessions bypass idle reaper but are still subject
+            to explicit termination and JWT re-authentication on attach.
+        idleTimeout:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          default: 3600
+          description: |
+            Seconds of detached inactivity before the session is automatically
+            closed. 0 means use server default. Ignored when pinned is true.
+            NIST AC-12: enforces session termination after inactivity.
         websocketUrl:
           type: string
-          description: Relative WebSocket URL for this session
+          description: Relative WebSocket URL for attaching to this session
         createdAt:
           type: string
           format: date-time
+        detachedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: Timestamp when session was last detached (browser disconnected)
         closedAt:
           type:
             - string

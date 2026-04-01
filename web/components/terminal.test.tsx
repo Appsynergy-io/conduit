@@ -38,8 +38,6 @@ vi.mock("@xterm/addon-fit", () => {
   }
 })
 
-vi.mock("@xterm/xterm/css/xterm.css", () => ({}))
-
 // Mock useAuth — cookie-based auth, no token in JS
 vi.mock("@/hooks/use-auth", () => ({
   useAuth: () => ({ isAuthenticated: true, loading: false }),
@@ -155,7 +153,7 @@ describe("TerminalView", () => {
 
     const ws = mockWebSocketInstances[0]
     // Verify URL structure — no token in query param, agentId in path, subprotocol set
-    expect(ws.url).toContain("/api/v1/shell/agent-123")
+    expect(ws.url).toContain("/api/v1/agents/agent-123/shell/new")
     expect(ws.url).not.toContain("token=")
     expect(ws.url).toContain("cols=80")
     expect(ws.url).toContain("rows=24")
@@ -307,7 +305,7 @@ describe("TerminalView — Security", () => {
 
     const ws = mockWebSocketInstances[0]
     // encodeURIComponent should encode slashes and dots
-    expect(ws.url).toContain(`/api/v1/shell/${encodeURIComponent("../../etc/passwd")}`)
+    expect(ws.url).toContain(`/api/v1/agents/${encodeURIComponent("../../etc/passwd")}/shell/new`)
     expect(ws.url).not.toContain("../../etc/passwd?")
   })
 

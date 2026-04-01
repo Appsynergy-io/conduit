@@ -18,10 +18,11 @@ import (
 )
 
 // handleShellSession handles a browser WebSocket connection for an interactive
-// shell session on a specific agent. It bridges the browser WebSocket to a
-// CWP SHELL stream on the agent's multiplexed connection.
+// shell session on a specific agent. Creates a persistent session via
+// SessionManager and attaches the browser. When the browser disconnects,
+// the session enters detached state instead of closing.
 //
-// GET /api/v1/shell/{agentId} (WebSocket upgrade)
+// GET /api/v1/agents/{agentId}/shell/new (WebSocket upgrade)
 func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "agentId")
 
@@ -83,56 +84,22 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	}
 	defer browserConn.Close(websocket.StatusNormalClosure, "")
 
-	// Allocate a stream on the agent's mux
-	streamID := connAgent.Mux.NextStreamID()
-	agentCh := connAgent.Mux.OpenStream(streamID)
-	defer connAgent.Mux.CloseStream(streamID)
-
-	// Create shell session record
-	sessionID := uuid.NewString()
-	shellSession := &db.ShellSession{
-		ID:        sessionID,
-		TenantID:  claims.TenantID,
-		AgentID:   agentID,
-		UserID:    claims.Subject,
-		Status:    "active",
-		Cols:      &cols,
-		Rows:      &rows,
-		Recording: 1,
-	}
-	if err := s.db.CreateShellSession(r.Context(), shellSession); err != nil {
-		s.logger.Error("failed to create shell session", "error", err)
-		return
-	}
-
-	// Initialize asciicast v2 recorder if recording is enabled (NIST AU-2)
-	var recorder *asciicastRecorder
-	if shellSession.Recording == 1 {
-		recorder = newAsciicastRecorder(cols, rows)
-	}
-
-	// Send SHELL_START to agent
-	startPayload := protocol.ShellStartPayload{
-		SessionID: sessionID,
-		Cols:      cols,
-		Rows:      rows,
-	}
-	startFrame, err := protocol.NewFrame(protocol.FrameShellStart, streamID, startPayload)
+	// Create persistent session via SessionManager
+	ls, err := s.sessionMgr.CreateSession(
+		r.Context(), connAgent, agent,
+		claims.Subject, claims.TenantID,
+		cols, rows,
+		false, // not pinned by default
+		3600,  // 1 hour idle timeout
+		true,  // recording enabled
+	)
 	if err != nil {
-		s.logger.Error("failed to create SHELL_START frame", "error", err)
-		return
-	}
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	if err := connAgent.Mux.Send(ctx, startFrame); err != nil {
-		s.logger.Error("failed to send SHELL_START", "error", err)
+		s.logger.Error("failed to create session", "error", err)
 		return
 	}
 
 	// Audit
-	s.db.InsertAuditLog(ctx, &db.AuditEntry{
+	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
 		ID:            uuid.NewString(),
 		TenantID:      claims.TenantID,
 		EventType:     "shell.start",
@@ -140,148 +107,326 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 		AgentID:       &agentID,
 		AgentHostname: &agent.Hostname,
 		SourceIP:      strPtr(r.RemoteAddr),
-		Details:       strPtr(fmt.Sprintf(`{"session_id":"%s","cols":%d,"rows":%d}`, sessionID, cols, rows)),
+		Details:       strPtr(fmt.Sprintf(`{"session_id":"%s","cols":%d,"rows":%d}`, ls.ID, cols, rows)),
 		Outcome:       "success",
 	})
 
-	s.publishEvent(ctx, claims.TenantID, Event{
+	s.publishEvent(r.Context(), claims.TenantID, Event{
 		Channel: "shell",
 		Type:    "shell.start",
 		Data: map[string]string{
-			"sessionId": sessionID,
+			"sessionId": ls.ID,
 			"agentId":   agentID,
 			"userId":    claims.Subject,
 		},
 	})
 
 	s.logger.Info("shell session started",
+		"session_id", ls.ID,
+		"agent_id", agentID,
+		"user_id", claims.Subject,
+	)
+
+	// Send session ID to browser so it can use pin/pop-out features
+	sessionMsg, _ := json.Marshal(map[string]string{
+		"type":      "session",
+		"sessionId": ls.ID,
+	})
+	writeCtx, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	if err := browserConn.Write(writeCtx, websocket.MessageText, sessionMsg); err != nil {
+		writeCancel()
+		s.logger.Error("failed to send session ID to browser", "error", err)
+		return
+	}
+	writeCancel()
+
+	// Attach browser — blocks until browser disconnects.
+	// When browser disconnects, session enters detached state (PTY stays alive).
+	if err := s.sessionMgr.AttachBrowser(r.Context(), ls, browserConn); err != nil {
+		s.logger.Debug("browser attach ended", "session_id", ls.ID, "error", err)
+	}
+
+	// Audit detach
+	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
+		ID:            uuid.NewString(),
+		TenantID:      claims.TenantID,
+		EventType:     "shell.detach",
+		UserID:        &claims.Subject,
+		AgentID:       &agentID,
+		AgentHostname: &agent.Hostname,
+		SourceIP:      strPtr(r.RemoteAddr),
+		Details:       strPtr(`{"session_id":"` + ls.ID + `"}`),
+		Outcome:       "success",
+	})
+}
+
+// handleShellAttach handles a browser WebSocket reconnecting to an existing
+// detached shell session. Replays buffered output, then resumes live I/O.
+//
+// GET /api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws (WebSocket upgrade)
+func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
+	agentID := chi.URLParam(r, "agentId")
+	sessionID := chi.URLParam(r, "sessionId")
+
+	// Authenticate (NIST IA-2, IA-11)
+	tokenStr := middleware.ExtractToken(r)
+	if tokenStr == "" {
+		apierror.Unauthorized(w, r, "Authentication required.", nil)
+		return
+	}
+
+	claims, err := s.jwtMgr.ValidateToken(tokenStr)
+	if err != nil {
+		apierror.Unauthorized(w, r, "Invalid or expired token.", nil)
+		return
+	}
+
+	// Look up live session
+	ls := s.sessionMgr.Get(sessionID)
+	if ls == nil {
+		apierror.NotFound(w, r, "Session not found or already closed.", nil)
+		return
+	}
+
+	// Ownership check (NIST AC-3, OWASP API1 BOLA)
+	if ls.UserID != claims.Subject {
+		apierror.Forbidden(w, r, "Not the session owner.", nil)
+		return
+	}
+	if ls.AgentID != agentID {
+		apierror.NotFound(w, r, "Session not found on this agent.", nil)
+		return
+	}
+
+	// Upgrade browser connection
+	browserConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols: []string{"conduit-shell-v1"},
+	})
+	if err != nil {
+		s.logger.Error("shell attach websocket upgrade failed", "error", err)
+		return
+	}
+	defer browserConn.Close(websocket.StatusNormalClosure, "")
+
+	s.logger.Info("browser reattaching to session",
 		"session_id", sessionID,
 		"agent_id", agentID,
 		"user_id", claims.Subject,
 	)
 
-	// Bridge: browser ↔ agent
-	done := make(chan struct{})
-
-	// Browser → Agent: read from browser, send as SHELL_DATA or SHELL_RESIZE to agent
-	go func() {
-		defer func() {
-			select {
-			case done <- struct{}{}:
-			default:
-			}
-		}()
-		for {
-			_, data, err := browserConn.Read(ctx)
-			if err != nil {
-				return
-			}
-
-			// Check if this is a resize command (JSON with "type":"resize")
-			if f := parseBrowserResize(data, streamID); f != nil {
-				if err := connAgent.Mux.Send(ctx, f); err != nil {
-					return
-				}
-				continue
-			}
-
-			// Regular terminal data
-			f := &protocol.Frame{
-				Type:     protocol.FrameShellData,
-				StreamID: streamID,
-				Payload:  data,
-			}
-			if err := connAgent.Mux.Send(ctx, f); err != nil {
-				return
-			}
-		}
-	}()
-
-	// Agent → Browser: read from agent stream, send to browser
-	go func() {
-		defer func() {
-			select {
-			case done <- struct{}{}:
-			default:
-			}
-		}()
-		for {
-			select {
-			case f, ok := <-agentCh:
-				if !ok {
-					return
-				}
-				switch f.Type {
-				case protocol.FrameShellData:
-					writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
-					browserConn.Write(writeCtx, websocket.MessageBinary, f.Payload)
-					writeCancel()
-					if recorder != nil {
-						recorder.WriteOutput(f.Payload)
-					}
-				case protocol.FrameShellExit:
-					// Shell exited
-					return
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	// Wait for either direction to finish
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
-
-	// Close shell session
-	s.db.CloseShellSession(ctx, sessionID)
-
-	// Save shell recording if enabled (NIST AU-2, AU-12)
-	if recorder != nil && recorder.buf.Len() > 0 {
-		rec := &db.ShellRecording{
-			ID:            uuid.NewString(),
-			TenantID:      claims.TenantID,
-			SessionID:     sessionID,
-			AgentID:       agentID,
-			UserID:        claims.Subject,
-			AgentHostname: agent.Hostname,
-			Duration:      recorder.Duration(),
-			SizeBytes:     recorder.buf.Len(),
-			Format:        "asciicast-v2",
-			Data:          recorder.Bytes(),
-		}
-		if err := s.db.CreateShellRecording(ctx, rec); err != nil {
-			s.logger.Error("failed to save shell recording", "error", err, "session_id", sessionID)
-		}
-	}
-
-	s.logger.Info("shell session ended",
-		"session_id", sessionID,
-		"agent_id", agentID,
-	)
-
-	s.db.InsertAuditLog(ctx, &db.AuditEntry{
+	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
 		ID:            uuid.NewString(),
 		TenantID:      claims.TenantID,
-		EventType:     "shell.end",
+		EventType:     "shell.attach",
 		UserID:        &claims.Subject,
 		AgentID:       &agentID,
-		AgentHostname: &agent.Hostname,
 		SourceIP:      strPtr(r.RemoteAddr),
 		Details:       strPtr(`{"session_id":"` + sessionID + `"}`),
 		Outcome:       "success",
 	})
 
-	s.publishEvent(ctx, claims.TenantID, Event{
-		Channel: "shell",
-		Type:    "shell.end",
-		Data: map[string]string{
-			"sessionId": sessionID,
-			"agentId":   agentID,
-		},
+	// Attach — blocks until browser disconnects again
+	if err := s.sessionMgr.AttachBrowser(r.Context(), ls, browserConn); err != nil {
+		s.logger.Debug("browser reattach ended", "session_id", sessionID, "error", err)
+	}
+}
+
+// handleListAllShellSessions lists shell sessions across all agents.
+// GET /api/v1/shell/sessions
+func (s *Server) handleListAllShellSessions(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+
+	status := r.URL.Query().Get("status")
+	agentID := r.URL.Query().Get("agentId")
+	userID := r.URL.Query().Get("userId")
+
+	var pinnedOnly *bool
+	if p := r.URL.Query().Get("pinned"); p == "true" {
+		t := true
+		pinnedOnly = &t
+	} else if p == "false" {
+		f := false
+		pinnedOnly = &f
+	}
+
+	// Non-admin users can only see their own sessions (NIST AC-3)
+	if !isAdmin(claims.Roles) {
+		userID = claims.Subject
+	}
+
+	sessions, err := s.db.ListShellSessions(r.Context(), claims.TenantID, status, agentID, userID, pinnedOnly)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"data": sessions})
+}
+
+// handleListAgentShellSessions lists shell sessions for a specific agent.
+// GET /api/v1/agents/{agentId}/shell/sessions
+func (s *Server) handleListAgentShellSessions(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	agentID := chi.URLParam(r, "agentId")
+
+	status := r.URL.Query().Get("status")
+	userID := ""
+
+	var pinnedOnly *bool
+	if p := r.URL.Query().Get("pinned"); p == "true" {
+		t := true
+		pinnedOnly = &t
+	} else if p == "false" {
+		f := false
+		pinnedOnly = &f
+	}
+
+	// Non-admin users can only see their own sessions (NIST AC-3)
+	if !isAdmin(claims.Roles) {
+		userID = claims.Subject
+	}
+
+	sessions, err := s.db.ListShellSessions(r.Context(), claims.TenantID, status, agentID, userID, pinnedOnly)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"data": sessions})
+}
+
+// handleGetShellSession returns details for a specific session.
+// GET /api/v1/agents/{agentId}/shell/sessions/{sessionId}
+func (s *Server) handleGetShellSession(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	session, err := s.db.GetShellSessionByID(r.Context(), sessionID)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+	if session == nil || session.TenantID != claims.TenantID {
+		apierror.NotFound(w, r, "Session not found.", nil)
+		return
+	}
+
+	// Ownership check (NIST AC-3)
+	if session.UserID != claims.Subject && !isAdmin(claims.Roles) {
+		apierror.Forbidden(w, r, "Not the session owner.", nil)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, session)
+}
+
+// handleUpdateShellSession updates session settings (pin, idle timeout).
+// PATCH /api/v1/agents/{agentId}/shell/sessions/{sessionId}
+func (s *Server) handleUpdateShellSession(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	var req struct {
+		Pinned      *bool `json:"pinned"`
+		IdleTimeout *int  `json:"idleTimeout"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierror.BadRequest(w, r, "Invalid request body.", nil)
+		return
+	}
+
+	// Validate idle timeout bounds
+	if req.IdleTimeout != nil && (*req.IdleTimeout < 60 || *req.IdleTimeout > 86400) {
+		apierror.BadRequest(w, r, "idleTimeout must be between 60 and 86400 seconds.", nil)
+		return
+	}
+
+	// Look up live session
+	ls := s.sessionMgr.Get(sessionID)
+	if ls == nil {
+		apierror.NotFound(w, r, "Session not found or already closed.", nil)
+		return
+	}
+
+	// Ownership check (NIST AC-3)
+	if ls.UserID != claims.Subject && !isAdmin(claims.Roles) {
+		apierror.Forbidden(w, r, "Not the session owner.", nil)
+		return
+	}
+
+	if err := s.sessionMgr.UpdateSession(r.Context(), ls, req.Pinned, req.IdleTimeout); err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	// Audit
+	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
+		ID:        uuid.NewString(),
+		TenantID:  claims.TenantID,
+		EventType: "shell.session.updated",
+		UserID:    &claims.Subject,
+		AgentID:   &ls.AgentID,
+		Details:   strPtr(fmt.Sprintf(`{"session_id":"%s","pinned":%v}`, sessionID, ls.Pinned)),
+		Outcome:   "success",
 	})
+
+	// Return updated session from DB
+	session, err := s.db.GetShellSessionByID(r.Context(), sessionID)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
+// handleTerminateShellSession terminates a live session.
+// DELETE /api/v1/agents/{agentId}/shell/sessions/{sessionId}
+func (s *Server) handleTerminateShellSession(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	ls := s.sessionMgr.Get(sessionID)
+	if ls == nil {
+		// Session not in memory — may be orphaned from a server restart or already closed.
+		session, err := s.db.GetShellSessionByID(r.Context(), sessionID)
+		if err != nil {
+			apierror.Internal(w, r, err)
+			return
+		}
+		if session == nil || session.TenantID != claims.TenantID {
+			apierror.NotFound(w, r, "Session not found.", nil)
+			return
+		}
+		// Close in DB if still active/detached (orphaned after restart)
+		if session.Status != "closed" {
+			if err := s.db.CloseShellSession(r.Context(), session.ID); err != nil {
+				apierror.Internal(w, r, err)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Ownership check (NIST AC-3)
+	if ls.UserID != claims.Subject && !isAdmin(claims.Roles) {
+		apierror.Forbidden(w, r, "Not the session owner.", nil)
+		return
+	}
+
+	s.sessionMgr.TerminateSession(r.Context(), ls)
+
+	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
+		ID:        uuid.NewString(),
+		TenantID:  claims.TenantID,
+		EventType: "shell.session.terminated",
+		UserID:    &claims.Subject,
+		AgentID:   &ls.AgentID,
+		Details:   strPtr(`{"session_id":"` + sessionID + `"}`),
+		Outcome:   "success",
+	})
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // browserResizeMsg is the JSON structure sent by the browser for terminal resize.

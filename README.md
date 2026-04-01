@@ -20,6 +20,52 @@ Full security spec: [`CLAUDE.md` — Security Standards](CLAUDE.md)
 - **Frontend**: Next.js static export + shadcn/ui + Tailwind CSS
 - **TUI**: bubbletea (shell-only for CE)
 
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    conduit-server (Go)                        │
+│                                                              │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────────────┐   │
+│  │  QUIC      │  │  HTTP/3 +  │  │  Static Next.js      │   │
+│  │  Listener  │  │  HTTP/2    │  │  (embed.FS)          │   │
+│  │  (agents)  │  │  + WS      │  │  shadcn/ui dashboard │   │
+│  └─────┬──────┘  └─────┬──────┘  │  + promo website     │   │
+│        │               │         └──────────────────────┘   │
+│  ┌─────┴───────────────┴──────────────────────┐              │
+│  │              Session Router                 │              │
+│  │  (maps browser WS ↔ agent QUIC/WS stream)  │              │
+│  └────────────────────┬───────────────────────┘              │
+│                       │                                      │
+│  ┌────────────────────┴───────────────────────┐              │
+│  │  Auth: WebAuthn (prod) / Password (dev)    │              │
+│  │  JWT: Ed25519 signed, short-lived          │              │
+│  │  Agent Auth: HMAC-SHA256 join tokens       │              │
+│  └────────────────────────────────────────────┘              │
+│                       │                                      │
+│  ┌────────────────────┴───────────────────────┐              │
+│  │  SQLite (single-tenant, UUID at setup)      │              │
+│  └────────────────────────────────────────────┘              │
+│                                                              │
+│  Production: UDP 443 (QUIC) + TCP 443 (TLS/HTTP)            │
+│  Dev mode:   UDP 8443 + TCP 8443 (no root required)         │
+└──────────────────────────────────────────────────────────────┘
+       ▲ QUIC/WSS                    ▲ HTTP/3 + WSS
+       │ (agent connections)         │ (browser)
+       │                             │
+  ┌────┴─────┐                 ┌────┴──────────┐
+  │  Agent   │                 │   Browser     │
+  │ (conduit)│                 │  shadcn/ui    │
+  │  OS svc  │                 │  xterm.js     │
+  │ service  │                 │  file manager │
+  └──────────┘                 └───────────────┘
+
+       ┌──────────┐
+       │   TUI    │
+       │(conduit) │
+       │bubbletea │
+       │ shell    │
+       └──────────┘
+```
+
 ## Build & Run
 
 ```bash
@@ -122,6 +168,10 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | PTY shell execution on agent (Linux, macOS via creack/pty) | ✅ done | Agent |
 | Multiple concurrent shell sessions per agent (multiplexed via CWP) | ✅ done | CWP |
 | Terminal session recording + playback (asciicast v2) | ✅ done | Shell, DB |
+| Persistent/resumable sessions — survive browser disconnect, resume anywhere | ✅ done | Shell, SessionManager |
+| Pin mode — indefinite sessions for monitoring long-running tasks | ✅ done | SessionManager |
+| Session detach/attach with ring buffer output replay | ✅ done | SessionManager |
+| Pop-out terminal windows (standalone, minimal chrome) | ✅ done | Frontend, Shell |
 
 ### File Management
 
