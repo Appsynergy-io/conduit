@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -28,6 +29,7 @@ func main() {
 
 	root.AddCommand(agentCmd())
 	root.AddCommand(joinCmd())
+	root.AddCommand(uninstallCmd())
 	root.AddCommand(tokenCmd())
 	root.AddCommand(shellCmd())
 
@@ -149,6 +151,9 @@ func joinCmd() *cobra.Command {
 				return fmt.Errorf("parsing response: %w", err)
 			}
 
+			// Stop existing service if re-joining
+			uninstallService()
+
 			// Save agent configuration
 			agentCfg := &agent.Config{
 				ServerURL:   serverURL,
@@ -185,6 +190,58 @@ func joinCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&devInsecure, "dev-insecure", false, "Accept self-signed server certificate (dev only)")
 	cmd.Flags().StringSliceVarP(&labels, "labels", "l", nil, "Labels to apply on join (key=value pairs)")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Config file path (default: platform-specific)")
+
+	return cmd
+}
+
+func uninstallCmd() *cobra.Command {
+	var removeBinary bool
+	var configPath string
+
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Stop and remove the Conduit agent service, config, and optionally the binary",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Stop and remove system service
+			fmt.Println("Stopping and removing service...")
+			if err := uninstallService(); err != nil {
+				fmt.Printf("  Warning: %v\n", err)
+			} else {
+				fmt.Println("  Service removed.")
+			}
+
+			// Remove config file and directory
+			cfgPath := configPath
+			if cfgPath == "" {
+				cfgPath = agent.DefaultConfigPath()
+			}
+			if err := os.Remove(cfgPath); err != nil && !os.IsNotExist(err) {
+				fmt.Printf("  Warning: could not remove config %s: %v\n", cfgPath, err)
+			} else if err == nil {
+				fmt.Printf("  Removed %s\n", cfgPath)
+			}
+			// Try removing config directory if empty
+			os.Remove(filepath.Dir(cfgPath))
+
+			// Optionally remove binary
+			if removeBinary {
+				binPath, _ := os.Executable()
+				if binPath != "" {
+					if err := os.Remove(binPath); err != nil {
+						fmt.Printf("  Warning: could not remove binary %s: %v\n", binPath, err)
+					} else {
+						fmt.Printf("  Removed %s\n", binPath)
+					}
+				}
+			}
+
+			fmt.Println("Conduit agent uninstalled.")
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&removeBinary, "remove-binary", false, "Also remove the conduit binary")
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Config file path (default: platform-specific)")
 
 	return cmd

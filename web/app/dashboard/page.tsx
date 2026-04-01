@@ -33,7 +33,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/v1/agents")
       if (res.ok) {
         const data = await res.json()
-        setAgents(data.items ?? [])
+        setAgents(data.data ?? [])
       }
     } finally {
       setLoading(false)
@@ -47,7 +47,7 @@ export default function DashboardPage() {
   // Real-time updates from EventBus
   useEffect(() => {
     const unsub = subscribe("agents", (event) => {
-      if (event.type === "agent.connected" || event.type === "agent.disconnected") {
+      if (event.type === "agent.connected" || event.type === "agent.disconnected" || event.type === "agent.registered") {
         fetchAgents()
       }
     })
