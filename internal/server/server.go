@@ -31,6 +31,7 @@ type Server struct {
 	tlsConfig        *tls.Config
 	eventBus         *EventBus
 	agentRegistry    *AgentRegistry
+	sessionMgr       *SessionManager
 	webhooks         *WebhookDeliverer
 	frontendFS       fs.FS
 	webAuthn         *webauthn.WebAuthn
@@ -43,14 +44,16 @@ type Server struct {
 
 // New creates a Server with all dependencies wired.
 func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig *tls.Config, logger *slog.Logger, frontendFS fs.FS) *Server {
+	eb := NewEventBus(logger)
 	s := &Server{
 		cfg:              cfg,
 		db:               database,
 		jwtMgr:           jwtMgr,
 		logger:           logger,
 		tlsConfig:        tlsConfig,
-		eventBus:         NewEventBus(logger),
+		eventBus:         eb,
 		agentRegistry:    NewAgentRegistry(logger),
+		sessionMgr:       NewSessionManager(database, logger, eb),
 		webhooks:         NewWebhookDeliverer(database, logger),
 		frontendFS:       frontendFS,
 		webAuthnSessions: auth.NewWebAuthnSessionStore(),
@@ -134,7 +137,8 @@ func (s *Server) buildRouter() chi.Router {
 
 	// WebSocket endpoints (outside RequireJSON — WebSocket upgrade is not JSON)
 	r.Get("/api/v1/events/stream", s.handleEventStream)
-	r.Get("/api/v1/shell/{agentId}", s.handleShellSession)
+	r.Get("/api/v1/agents/{agentId}/shell/new", s.handleShellSession)
+	r.Get("/api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws", s.handleShellAttach)
 	r.Get("/agent/v1/connect", s.handleAgentConnect)
 
 	// API v1 routes
@@ -242,6 +246,13 @@ func (s *Server) buildRouter() chi.Router {
 				r.Get("/exec/{jobId}", s.handleGetBulkExecJob)
 				r.Post("/exec/{jobId}/cancel", s.handleCancelBulkExec)
 
+				// Shell sessions (persistent/resumable)
+				r.Get("/shell/sessions", s.handleListAllShellSessions)
+				r.Get("/agents/{agentId}/shell/sessions", s.handleListAgentShellSessions)
+				r.Get("/agents/{agentId}/shell/sessions/{sessionId}", s.handleGetShellSession)
+				r.Patch("/agents/{agentId}/shell/sessions/{sessionId}", s.handleUpdateShellSession)
+				r.Delete("/agents/{agentId}/shell/sessions/{sessionId}", s.handleTerminateShellSession)
+
 				// Shell recordings
 				r.Get("/recordings", s.handleListRecordings)
 				r.Get("/recordings/{recordingId}", s.handleGetRecording)
@@ -300,6 +311,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.logger.InfoContext(ctx, "shutting down server")
+	s.sessionMgr.Stop()
 	s.webhooks.Stop()
 	return s.httpSrv.Shutdown(ctx)
 }
