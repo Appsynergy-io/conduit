@@ -126,6 +126,11 @@ func (s *Server) buildRouter() chi.Router {
 
 	// Public routes (no auth)
 	r.Get("/health", s.handleHealth)
+	r.Get("/install.sh", s.handleInstallScript)
+
+	// Public binary download (outside RequireJSON — serves binary files)
+	r.Get("/api/v1/download/agent", s.handleDownloadAgent)
+	r.Get("/api/v1/download/agent/platforms", s.handleListAvailableBinaries)
 
 	// WebSocket endpoints (outside RequireJSON — WebSocket upgrade is not JSON)
 	r.Get("/api/v1/events/stream", s.handleEventStream)

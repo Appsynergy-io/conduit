@@ -111,6 +111,8 @@ Status: `spec-only` | `in-progress` | `done`
 | Agent metrics collection (CPU, RAM, disk, load, uptime — `AGENT_INFO` frames) | done | CWP |
 | Universal resource labelling system for surgical targeting | done | DB |
 | Agent installed as system service (systemd / launchd / Windows) via `conduit join` | done | Agent |
+| Agent binary hosting + install script (one-line curl install) | done | Server |
+| Dashboard join token management (create, revoke, install command generator) | done | Frontend, Auth |
 
 ### Shell & Terminal
 
