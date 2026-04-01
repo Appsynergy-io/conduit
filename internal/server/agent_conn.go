@@ -340,8 +340,29 @@ func (s *Server) handleAgentFrame(ctx context.Context, agent *ConnectedAgent, f 
 		s.db.UpdateAgentStatus(ctx, agent.AgentID, "online")
 
 	case protocol.FrameAgentInfo:
-		// Agent metrics — update last seen, could store metrics
+		// Agent metrics — update last seen + publish to EventBus (NIST SI-4)
 		s.db.UpdateAgentStatus(ctx, agent.AgentID, "online")
+
+		var metrics protocol.AgentInfoPayload
+		if err := protocol.UnmarshalPayload(f.Payload, &metrics); err == nil {
+			s.publishEvent(ctx, agent.TenantID, Event{
+				Channel: "metrics",
+				Type:    "agent.metrics",
+				Data: map[string]interface{}{
+					"agentId":    agent.AgentID,
+					"hostname":   agent.Hostname,
+					"cpuPercent": metrics.CPUPercent,
+					"memTotal":   metrics.MemTotal,
+					"memUsed":    metrics.MemUsed,
+					"diskTotal":  metrics.DiskTotal,
+					"diskUsed":   metrics.DiskUsed,
+					"uptime":     metrics.Uptime,
+					"loadAvg1":   metrics.LoadAvg1,
+					"loadAvg5":   metrics.LoadAvg5,
+					"loadAvg15":  metrics.LoadAvg15,
+				},
+			})
+		}
 
 	default:
 		s.logger.Debug("unhandled agent frame",

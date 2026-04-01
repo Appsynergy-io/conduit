@@ -102,7 +102,7 @@ Status: `spec-only` | `in-progress` | `done`
 | Agent registration flow (single-use + persistent join tokens) | done | Auth, DB |
 | Agent WebSocket connection handler + CWP authentication | done | CWP, EventBus |
 | Agent heartbeat and connection status | done | CWP, EventBus |
-| Dashboard shows transport type per agent (QUIC vs WebSocket) | spec-only | EventBus |
+| Dashboard shows transport type per agent (QUIC vs WebSocket) | done | EventBus |
 | Linux amd64 + arm64 agent builds | done | Agent |
 | Windows amd64 agent build | in-progress | Agent |
 | macOS arm64 agent build + launchd service | done | Agent |
@@ -169,10 +169,10 @@ Status: `spec-only` | `in-progress` | `done`
 | WebSocket EventBus for live updates — no polling | done | HTTP server |
 | Agent connect/disconnect events push to all browsers | done | EventBus |
 | Shell session start/stop events | done | EventBus, Shell |
-| File operation events | spec-only | EventBus, Files |
+| File operation events | done | EventBus, Files |
 | Auth events (login, logout, session revocation) | done | EventBus, Auth |
-| Agent metrics streaming | spec-only | EventBus, CWP |
-| Channel-based subscriptions (agents, shell, files, auth, audit, metrics, exec, system) | spec-only | EventBus |
+| Agent metrics streaming | done | EventBus, CWP |
+| Channel-based subscriptions (agents, shell, files, auth, audit, metrics, exec, system) | done | EventBus |
 
 ### Promotional Website
 

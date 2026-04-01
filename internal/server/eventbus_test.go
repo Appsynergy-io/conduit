@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -99,4 +100,304 @@ func TestEventStream_AuthHeader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	defer conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// ---------------------------------------------------------------------------
+// Channel-based subscription tests
+// ---------------------------------------------------------------------------
+
+func TestEventStream_ChannelQuery(t *testing.T) {
+	srv, jwtMgr, _ := newTestServerWithDB(t, "dev")
+
+	ts := httptest.NewServer(srv.Router())
+	defer ts.Close()
+
+	token, err := jwtMgr.IssueAccessToken("user-1", "tenant-1", "sess-1", []string{"org_admin"}, nil)
+	require.NoError(t, err)
+
+	// Subscribe only to "agents" channel
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream?channels=agents"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer " + token},
+		},
+	})
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Give client time to register
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish an agents event — should be received
+	srv.PublishTestEvent("tenant-1", server.Event{
+		Channel: "agents",
+		Type:    "agent.connected",
+		Data:    map[string]string{"agentId": "a1"},
+	})
+
+	// Publish a shell event — should NOT be received
+	srv.PublishTestEvent("tenant-1", server.Event{
+		Channel: "shell",
+		Type:    "shell.start",
+		Data:    map[string]string{"sessionId": "s1"},
+	})
+
+	// Read the first message — should be agents event
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, data, err := conn.Read(readCtx)
+	require.NoError(t, err)
+
+	var msg map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &msg))
+	assert.Equal(t, "agents", msg["channel"])
+	assert.Equal(t, "agent.connected", msg["type"])
+}
+
+func TestEventStream_DynamicSubscribe(t *testing.T) {
+	srv, jwtMgr, _ := newTestServerWithDB(t, "dev")
+
+	ts := httptest.NewServer(srv.Router())
+	defer ts.Close()
+
+	token, err := jwtMgr.IssueAccessToken("user-1", "tenant-1", "sess-1", []string{"org_admin"}, nil)
+	require.NoError(t, err)
+
+	// Connect with no channels (defaults to all)... actually let's start with just agents
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream?channels=agents"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer " + token},
+		},
+	})
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Dynamically subscribe to "shell" channel
+	subMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "subscribe",
+		"channels": []string{"shell"},
+	})
+	writeCtx, writeCancel := context.WithTimeout(ctx, 1*time.Second)
+	err = conn.Write(writeCtx, websocket.MessageText, subMsg)
+	writeCancel()
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Now publish a shell event — should be received
+	srv.PublishTestEvent("tenant-1", server.Event{
+		Channel: "shell",
+		Type:    "shell.start",
+		Data:    map[string]string{"sessionId": "s1"},
+	})
+
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, data, err := conn.Read(readCtx)
+	require.NoError(t, err)
+
+	var msg map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &msg))
+	assert.Equal(t, "shell", msg["channel"])
+	assert.Equal(t, "shell.start", msg["type"])
+}
+
+func TestEventStream_DynamicUnsubscribe(t *testing.T) {
+	srv, jwtMgr, _ := newTestServerWithDB(t, "dev")
+
+	ts := httptest.NewServer(srv.Router())
+	defer ts.Close()
+
+	token, err := jwtMgr.IssueAccessToken("user-1", "tenant-1", "sess-1", []string{"org_admin"}, nil)
+	require.NoError(t, err)
+
+	// Connect with agents + shell channels
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream?channels=agents,shell"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer " + token},
+		},
+	})
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Unsubscribe from "shell"
+	unsubMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "unsubscribe",
+		"channels": []string{"shell"},
+	})
+	writeCtx, writeCancel := context.WithTimeout(ctx, 1*time.Second)
+	err = conn.Write(writeCtx, websocket.MessageText, unsubMsg)
+	writeCancel()
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish an agents event — should be received
+	srv.PublishTestEvent("tenant-1", server.Event{
+		Channel: "agents",
+		Type:    "agent.connected",
+		Data:    map[string]string{"agentId": "a1"},
+	})
+
+	// Publish a shell event — should NOT be received
+	srv.PublishTestEvent("tenant-1", server.Event{
+		Channel: "shell",
+		Type:    "shell.start",
+		Data:    map[string]string{"sessionId": "s1"},
+	})
+
+	// Read — should get agents event only
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, data, err := conn.Read(readCtx)
+	require.NoError(t, err)
+
+	var msg map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &msg))
+	assert.Equal(t, "agents", msg["channel"])
+}
+
+func TestEventStream_PingPong(t *testing.T) {
+	srv, jwtMgr, _ := newTestServerWithDB(t, "dev")
+
+	ts := httptest.NewServer(srv.Router())
+	defer ts.Close()
+
+	token, err := jwtMgr.IssueAccessToken("user-1", "tenant-1", "sess-1", []string{"org_admin"}, nil)
+	require.NoError(t, err)
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer " + token},
+		},
+	})
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Send ping
+	pingMsg, _ := json.Marshal(map[string]string{"type": "ping"})
+	writeCtx, writeCancel := context.WithTimeout(ctx, 1*time.Second)
+	err = conn.Write(writeCtx, websocket.MessageText, pingMsg)
+	writeCancel()
+	require.NoError(t, err)
+
+	// Read pong
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, data, err := conn.Read(readCtx)
+	require.NoError(t, err)
+
+	var msg map[string]string
+	require.NoError(t, json.Unmarshal(data, &msg))
+	assert.Equal(t, "pong", msg["type"])
+}
+
+func TestEventStream_TenantIsolation(t *testing.T) {
+	srv, jwtMgr, _ := newTestServerWithDB(t, "dev")
+
+	ts := httptest.NewServer(srv.Router())
+	defer ts.Close()
+
+	tokenA, _ := jwtMgr.IssueAccessToken("user-a", "tenant-a", "sess-a", []string{"org_admin"}, nil)
+	tokenB, _ := jwtMgr.IssueAccessToken("user-b", "tenant-b", "sess-b", []string{"org_admin"}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	baseURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream?channels=agents"
+
+	connA, _, err := websocket.Dial(ctx, baseURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + tokenA}},
+	})
+	require.NoError(t, err)
+	defer connA.Close(websocket.StatusNormalClosure, "")
+
+	connB, _, err := websocket.Dial(ctx, baseURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + tokenB}},
+	})
+	require.NoError(t, err)
+	defer connB.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish event for tenant-a only
+	srv.PublishTestEvent("tenant-a", server.Event{
+		Channel: "agents",
+		Type:    "agent.connected",
+		Data:    map[string]string{"agentId": "a1"},
+	})
+
+	// Tenant A should receive it
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	_, data, err := connA.Read(readCtx)
+	readCancel()
+	require.NoError(t, err)
+
+	var msg map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &msg))
+	assert.Equal(t, "agent.connected", msg["type"])
+
+	// Tenant B should NOT receive it (read should timeout)
+	readCtxB, readCancelB := context.WithTimeout(ctx, 300*time.Millisecond)
+	_, _, err = connB.Read(readCtxB)
+	readCancelB()
+	assert.Error(t, err, "tenant B should not receive tenant A's events")
+}
+
+func TestEventStream_InvalidMessage(t *testing.T) {
+	srv, jwtMgr, _ := newTestServerWithDB(t, "dev")
+
+	ts := httptest.NewServer(srv.Router())
+	defer ts.Close()
+
+	token, err := jwtMgr.IssueAccessToken("user-1", "tenant-1", "sess-1", []string{"org_admin"}, nil)
+	require.NoError(t, err)
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/events/stream"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer " + token},
+		},
+	})
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Send invalid JSON
+	writeCtx, writeCancel := context.WithTimeout(ctx, 1*time.Second)
+	err = conn.Write(writeCtx, websocket.MessageText, []byte("not json"))
+	writeCancel()
+	require.NoError(t, err)
+
+	// Should get error response
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, data, err := conn.Read(readCtx)
+	require.NoError(t, err)
+
+	var msg map[string]string
+	require.NoError(t, json.Unmarshal(data, &msg))
+	assert.Equal(t, "error", msg["type"])
+	assert.Contains(t, msg["message"], "invalid")
 }
