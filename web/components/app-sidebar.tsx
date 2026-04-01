@@ -1,6 +1,6 @@
 "use client"
 
-import { LogOut, Monitor, Moon, ScrollText, Settings, Sun, Users, Webhook } from "lucide-react"
+import { KeyRound, LogOut, Monitor, Moon, ScrollText, Settings, Sun, Users, Webhook } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
@@ -21,6 +21,7 @@ import { useAuth } from "@/hooks/use-auth"
 
 const navItems = [
   { title: "Agents", href: "/dashboard", icon: Monitor },
+  { title: "Join Tokens", href: "/dashboard/tokens", icon: KeyRound },
   { title: "Audit Log", href: "/dashboard/audit", icon: ScrollText },
   { title: "Users", href: "/dashboard/users", icon: Users },
   { title: "Webhooks", href: "/dashboard/webhooks", icon: Webhook },

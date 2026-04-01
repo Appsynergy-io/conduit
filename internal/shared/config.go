@@ -15,11 +15,12 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Mode     string `mapstructure:"mode"`     // "production" or "dev"
-	Domain   string `mapstructure:"domain"`   // e.g. "conduit.example.com"
-	HTTPAddr string `mapstructure:"httpAddr"`  // TCP listen address (default ":443" / ":8443")
-	QUICAddr string `mapstructure:"quicAddr"`  // UDP listen address (default ":443" / ":8443")
-	CertDir  string `mapstructure:"certDir"`   // TLS cert storage path
+	Mode        string `mapstructure:"mode"`        // "production" or "dev"
+	Domain      string `mapstructure:"domain"`      // e.g. "conduit.example.com"
+	HTTPAddr    string `mapstructure:"httpAddr"`     // TCP listen address (default ":443" / ":8443")
+	QUICAddr    string `mapstructure:"quicAddr"`     // UDP listen address (default ":443" / ":8443")
+	CertDir     string `mapstructure:"certDir"`      // TLS cert storage path
+	BinariesDir string `mapstructure:"binariesDir"`  // Agent binary hosting directory
 }
 
 type DatabaseConfig struct {
@@ -53,6 +54,7 @@ func LoadConfig(path string) (*Config, error) {
 	viper.SetDefault("server.httpAddr", ":443")
 	viper.SetDefault("server.quicAddr", ":443")
 	viper.SetDefault("server.certDir", "/var/lib/conduit/certs")
+	viper.SetDefault("server.binariesDir", "/var/lib/conduit/binaries")
 	viper.SetDefault("database.path", "conduit.db")
 	viper.SetDefault("auth.jwtAccessTTL", "15m")
 	viper.SetDefault("auth.jwtRefreshTTL", "24h")
@@ -83,5 +85,8 @@ func (c *Config) ApplyDevDefaults() {
 	}
 	if c.Server.CertDir == "/var/lib/conduit/certs" {
 		c.Server.CertDir = ".certs"
+	}
+	if c.Server.BinariesDir == "/var/lib/conduit/binaries" {
+		c.Server.BinariesDir = ".binaries"
 	}
 }
