@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -11,6 +12,15 @@ import (
 // AuthCookieName is the httpOnly cookie used for browser-based authentication.
 // Uses __Host- prefix for strict cookie security (OWASP V3, NIST SC-23).
 const AuthCookieName = "__Host-conduit_token"
+
+// CITokenPrefix is the prefix for CI/automation tokens to distinguish from JWTs.
+const CITokenPrefix = "cdci_"
+
+// CITokenValidator looks up a CI token by its plaintext value and returns
+// synthetic claims if valid. Implemented by the server package.
+type CITokenValidator interface {
+	ValidateCIToken(ctx context.Context, token string) (*auth.Claims, error)
+}
 
 // ExtractToken retrieves a bearer token from the Authorization header first,
 // then falls back to the httpOnly auth cookie. Returns empty string if neither
@@ -32,9 +42,14 @@ func ExtractToken(r *http.Request) string {
 }
 
 // Auth validates the JWT from the Authorization header or httpOnly cookie
-// and injects claims into context.
+// and injects claims into context. Also supports CI tokens (cdci_ prefix).
 // Returns 401 for missing/invalid tokens (NIST IA-2, OWASP A07, API2).
-func Auth(jwtMgr *auth.JWTManager) func(http.Handler) http.Handler {
+func Auth(jwtMgr *auth.JWTManager, ciValidator ...CITokenValidator) func(http.Handler) http.Handler {
+	var ciVal CITokenValidator
+	if len(ciValidator) > 0 {
+		ciVal = ciValidator[0]
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := ExtractToken(r)
@@ -43,7 +58,17 @@ func Auth(jwtMgr *auth.JWTManager) func(http.Handler) http.Handler {
 				return
 			}
 
-			claims, err := jwtMgr.ValidateToken(token)
+			var claims *auth.Claims
+			var err error
+
+			if strings.HasPrefix(token, CITokenPrefix) && ciVal != nil {
+				// CI token authentication (NIST IA-5)
+				claims, err = ciVal.ValidateCIToken(r.Context(), token)
+			} else {
+				// JWT authentication
+				claims, err = jwtMgr.ValidateToken(token)
+			}
+
 			if err != nil {
 				apierror.Unauthorized(w, r, "Invalid or expired token.", err)
 				return
