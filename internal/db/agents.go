@@ -3,7 +3,10 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // Agent represents a row from the agents table.
@@ -157,6 +160,92 @@ func (d *DB) DeleteAgent(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateAgentMetadata updates mutable agent fields (display_name, labels).
+func (d *DB) UpdateAgentMetadata(ctx context.Context, id string, displayName *string, labels *string) error {
+	_, err := d.conn.ExecContext(ctx, `
+		UPDATE agents SET display_name = ?, labels = ? WHERE id = ?`,
+		displayName, labels, id,
+	)
+	if err != nil {
+		return fmt.Errorf("updating agent metadata: %w", err)
+	}
+	return nil
+}
+
+// LabelSummary represents a label key with all its values and agent count.
+type LabelSummary struct {
+	Key    string
+	Values []string
+	Count  int
+}
+
+// ListLabels returns all label keys and unique values in use across agents for a tenant.
+func (d *DB) ListLabels(ctx context.Context, tenantID string) ([]LabelSummary, error) {
+	rows, err := d.conn.QueryContext(ctx, `
+		SELECT labels FROM agents
+		WHERE tenant_id = ? AND labels IS NOT NULL AND labels != ''`,
+		tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing labels: %w", err)
+	}
+	defer rows.Close()
+
+	// Aggregate label keys → unique values + count of agents per key
+	type keyInfo struct {
+		values map[string]struct{}
+		count  int
+	}
+	agg := make(map[string]*keyInfo)
+
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("scanning labels: %w", err)
+		}
+		var m map[string]string
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			continue // skip malformed JSON
+		}
+		seen := make(map[string]bool) // track keys seen in this agent
+		for k, v := range m {
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			info, ok := agg[k]
+			if !ok {
+				info = &keyInfo{values: make(map[string]struct{})}
+				agg[k] = info
+			}
+			info.values[v] = struct{}{}
+			info.count++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating labels: %w", err)
+	}
+
+	result := make([]LabelSummary, 0, len(agg))
+	for k, info := range agg {
+		vals := make([]string, 0, len(info.values))
+		for v := range info.values {
+			vals = append(vals, v)
+		}
+		sort.Strings(vals)
+		result = append(result, LabelSummary{Key: k, Values: vals, Count: info.count})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Key < result[j].Key })
+	return result, nil
+}
+
+// LabelFilter represents a parsed label filter from a query parameter.
+type LabelFilter struct {
+	Key    string
+	Values []string // OR'd values; empty means existence check
+	Negate bool
+}
+
 // AgentListParams holds filters for paginated agent listing.
 type AgentListParams struct {
 	TenantID  string
@@ -167,6 +256,7 @@ type AgentListParams struct {
 	Transport string
 	OS        string
 	Search    string
+	Labels    []LabelFilter
 }
 
 // ListAgentsPaginated returns agents with cursor-based pagination and filters.
@@ -192,6 +282,48 @@ func (d *DB) ListAgentsPaginated(ctx context.Context, p AgentListParams) ([]Agen
 		query += ` AND (hostname LIKE ? OR ip LIKE ?)`
 		term := "%" + p.Search + "%"
 		args = append(args, term, term)
+	}
+	for _, lf := range p.Labels {
+		jsonPath := "$." + lf.Key
+		if lf.Negate {
+			if len(lf.Values) == 0 {
+				// NOT existence: key must not exist
+				query += ` AND (labels IS NULL OR json_extract(labels, ?) IS NULL)`
+				args = append(args, jsonPath)
+			} else {
+				// NOT value: key must not equal any of the values
+				placeholders := make([]string, len(lf.Values))
+				valArgs := make([]interface{}, len(lf.Values))
+				for i, v := range lf.Values {
+					placeholders[i] = "?"
+					valArgs[i] = v
+				}
+				query += ` AND (labels IS NULL OR json_extract(labels, ?) IS NULL OR json_extract(labels, ?) NOT IN (` + strings.Join(placeholders, ",") + `))`
+				args = append(args, jsonPath, jsonPath)
+				args = append(args, valArgs...)
+			}
+		} else {
+			if len(lf.Values) == 0 {
+				// Existence: key must exist with any value
+				query += ` AND json_extract(labels, ?) IS NOT NULL`
+				args = append(args, jsonPath)
+			} else if len(lf.Values) == 1 {
+				// Exact match
+				query += ` AND json_extract(labels, ?) = ?`
+				args = append(args, jsonPath, lf.Values[0])
+			} else {
+				// OR match: value must be one of the listed values
+				placeholders := make([]string, len(lf.Values))
+				valArgs := make([]interface{}, len(lf.Values))
+				for i, v := range lf.Values {
+					placeholders[i] = "?"
+					valArgs[i] = v
+				}
+				query += ` AND json_extract(labels, ?) IN (` + strings.Join(placeholders, ",") + `)`
+				args = append(args, jsonPath)
+				args = append(args, valArgs...)
+			}
+		}
 	}
 	if p.CursorAt != "" {
 		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
