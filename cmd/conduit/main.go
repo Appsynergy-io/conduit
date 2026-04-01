@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -17,15 +18,29 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/appsynergy-io/conduit/internal/agent"
+	"github.com/appsynergy-io/conduit/internal/tui"
+)
+
+var (
+	flagServer      string
+	flagDevInsecure bool
 )
 
 func main() {
 	root := &cobra.Command{
 		Use:   "conduit",
 		Short: "Conduit agent, CLI, and TUI",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runTUI()
+		},
+		SilenceUsage: true,
 	}
+
+	root.PersistentFlags().StringVar(&flagServer, "server", os.Getenv("CONDUIT_SERVER"), "Server URL (or CONDUIT_SERVER env)")
+	root.PersistentFlags().BoolVar(&flagDevInsecure, "dev-insecure", false, "Accept self-signed certificate (dev only)")
 
 	root.AddCommand(agentCmd())
 	root.AddCommand(joinCmd())
@@ -35,6 +50,71 @@ func main() {
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
+	}
+}
+
+// loginClient prompts for server/credentials and returns an authenticated client.
+func loginClient() (*tui.Client, error) {
+	serverURL := flagServer
+	if serverURL == "" {
+		fmt.Print("Server URL: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			serverURL = strings.TrimSpace(scanner.Text())
+		}
+		if serverURL == "" {
+			return nil, fmt.Errorf("server URL is required")
+		}
+	}
+	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
+		serverURL = "https://" + serverURL
+	}
+
+	client := tui.NewClient(serverURL, flagDevInsecure)
+
+	fmt.Print("Email: ")
+	scanner := bufio.NewScanner(os.Stdin)
+	var email string
+	if scanner.Scan() {
+		email = strings.TrimSpace(scanner.Text())
+	}
+
+	fmt.Print("Password: ")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return nil, fmt.Errorf("reading password: %w", err)
+	}
+
+	if err := client.Login(email, string(pw)); err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+// runTUI launches the interactive agent list with shell access.
+func runTUI() error {
+	client, err := loginClient()
+	if err != nil {
+		return err
+	}
+
+	for {
+		result, err := tui.Run(client)
+		if err != nil {
+			return err
+		}
+		if result == nil {
+			return nil
+		}
+
+		fmt.Printf("Connecting to %s...\r\n", result.AgentName)
+		if err := tui.RunShell(client, result.AgentID); err != nil {
+			fmt.Fprintf(os.Stderr, "\r\nShell error: %v\r\n", err)
+		}
+		fmt.Printf("\r\nSession ended. Press Enter to continue...")
+		bufio.NewReader(os.Stdin).ReadByte()
 	}
 }
 
@@ -275,9 +355,36 @@ func shellCmd() *cobra.Command {
 		Short: "Open a shell session to an agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// TODO: authenticate, connect, open PTY session
-			_ = args[0] // agent name or ID
-			return fmt.Errorf("not yet implemented — use the dashboard for shell sessions")
+			client, err := loginClient()
+			if err != nil {
+				return err
+			}
+
+			target := args[0]
+
+			// Resolve: try as UUID first, then search by hostname
+			agentID := target
+			agents, err := client.ListAgents(context.Background())
+			if err != nil {
+				return fmt.Errorf("fetching agents: %w", err)
+			}
+
+			found := false
+			for _, a := range agents {
+				if a.ID == target || a.Hostname == target {
+					agentID = a.ID
+					if a.Status != "online" {
+						return fmt.Errorf("agent %q is offline", a.Hostname)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("agent %q not found", target)
+			}
+
+			return tui.RunShell(client, agentID)
 		},
 	}
 }
