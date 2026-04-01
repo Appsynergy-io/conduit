@@ -50,6 +50,8 @@ coverage/
 # Build artifacts
 /bin/
 /build/
+.binaries/
+.certs/
 
 # OS
 .DS_Store

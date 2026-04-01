@@ -209,4 +209,44 @@ func TestListPlatforms_WithBinaries(t *testing.T) {
 
 	// Verify installScript URL is present
 	assert.NotEmpty(t, resp["installScript"])
+
+	// Verify devMode flag is present for dev-mode server
+	assert.Equal(t, true, resp["devMode"])
+}
+
+func TestListPlatforms_DevModeFlag(t *testing.T) {
+	// Production mode server
+	database, err := db.New(context.Background(), ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { database.Close() })
+
+	jwtMgr, err := auth.NewJWTManager("test", 15*time.Minute, 24*time.Hour)
+	require.NoError(t, err)
+
+	cfg := &shared.Config{
+		Server: shared.ServerConfig{Mode: "production", HTTPAddr: ":0", BinariesDir: t.TempDir()},
+	}
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	srv := server.New(cfg, database, jwtMgr, nil, logger, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/download/agent/platforms", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, false, resp["devMode"])
+}
+
+func TestInstallScript_DevModeIncludesInsecureFlags(t *testing.T) {
+	srv, _ := newTestServerWithBinaries(t) // dev mode
+
+	req := httptest.NewRequest(http.MethodGet, "/install.sh", nil)
+	req.Host = "64.112.14.6:8443"
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	assert.Contains(t, body, `DEV_INSECURE="--dev-insecure"`)
+	assert.Contains(t, body, "-sSLk")
 }

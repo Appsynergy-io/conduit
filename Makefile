@@ -14,9 +14,14 @@ build-server: build-web
 build-agent:
 	CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 
-# Dev server (self-signed TLS, port 8443)
-dev-server:
-	go run ./cmd/conduit-server --dev
+# Build agent binary and stage for download hosting
+build-agent-hosted: build-agent
+	mkdir -p .binaries
+	cp conduit .binaries/conduit-$$(go env GOOS)-$$(go env GOARCH)
+
+# Dev: build everything + stage agent binary for hosting
+dev: build-server build-agent-hosted
+	./conduit-server --dev
 
 # Generate API types + server interface from openapi.yaml
 generate:
@@ -35,4 +40,4 @@ test:
 
 clean:
 	rm -f conduit-server conduit
-	rm -rf web/out web/.next
+	rm -rf web/out web/.next .binaries .certs

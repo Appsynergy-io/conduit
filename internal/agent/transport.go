@@ -23,8 +23,8 @@ const (
 )
 
 // connect dials the server WebSocket endpoint and performs the CWP handshake.
-// Returns an authenticated Mux on success.
-func (a *Agent) connect(ctx context.Context) (*protocol.Mux, error) {
+// Returns an authenticated Mux and the ReadLoop error channel on success.
+func (a *Agent) connect(ctx context.Context) (*protocol.Mux, <-chan error, error) {
 	wsURL := a.buildWSURL()
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, handshakeTimeout)
@@ -49,7 +49,7 @@ func (a *Agent) connect(ctx context.Context) (*protocol.Mux, error) {
 
 	conn, _, err := websocket.Dial(dialCtx, wsURL, opts)
 	if err != nil {
-		return nil, fmt.Errorf("dialing %s: %w", wsURL, err)
+		return nil, nil, fmt.Errorf("dialing %s: %w", wsURL, err)
 	}
 
 	// Set generous read limit for CWP frames
@@ -58,12 +58,13 @@ func (a *Agent) connect(ctx context.Context) (*protocol.Mux, error) {
 	mux := protocol.NewMux(conn, a.logger)
 
 	// Perform CWP handshake
-	if err := a.handshake(ctx, mux); err != nil {
+	readErr, err := a.handshake(ctx, mux)
+	if err != nil {
 		mux.Close()
-		return nil, fmt.Errorf("handshake: %w", err)
+		return nil, nil, fmt.Errorf("handshake: %w", err)
 	}
 
-	return mux, nil
+	return mux, readErr, nil
 }
 
 // buildWSURL constructs the WebSocket URL from the server URL config.
@@ -86,12 +87,14 @@ func (a *Agent) buildWSURL() string {
 }
 
 // handshake performs the CWP HELLO + AUTH two-frame handshake.
+// Returns a readErr channel from the ReadLoop that was started during handshake.
+// The ReadLoop uses the parent ctx so it survives after handshake completes.
 //
 // Flow:
 // 1. Agent sends HELLO (agentID, hostname, OS, arch, version)
 // 2. Agent sends AUTH (HMAC-SHA256 signature of HELLO payload + nonce)
 // 3. Server responds with AUTH_OK or AUTH_REJECT
-func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) error {
+func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) (<-chan error, error) {
 	hsCtx, hsCancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer hsCancel()
 
@@ -106,12 +109,12 @@ func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) error {
 
 	helloFrame, err := protocol.NewFrame(protocol.FrameHello, 0, hello)
 	if err != nil {
-		return fmt.Errorf("creating HELLO frame: %w", err)
+		return nil, fmt.Errorf("creating HELLO frame: %w", err)
 	}
 
 	// Send HELLO
 	if err := mux.Send(hsCtx, helloFrame); err != nil {
-		return fmt.Errorf("sending HELLO: %w", err)
+		return nil, fmt.Errorf("sending HELLO: %w", err)
 	}
 
 	// Compute HMAC-SHA256 signature
@@ -120,7 +123,7 @@ func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) error {
 
 	agentKeyBytes, err := hex.DecodeString(a.cfg.AgentKey)
 	if err != nil {
-		return fmt.Errorf("decoding agent key: %w", err)
+		return nil, fmt.Errorf("decoding agent key: %w", err)
 	}
 	keyHash := sha256.Sum256(agentKeyBytes)
 
@@ -138,18 +141,20 @@ func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) error {
 
 	authFrame, err := protocol.NewFrame(protocol.FrameAuth, 0, authPayload)
 	if err != nil {
-		return fmt.Errorf("creating AUTH frame: %w", err)
+		return nil, fmt.Errorf("creating AUTH frame: %w", err)
 	}
 
 	// Send AUTH
 	if err := mux.Send(hsCtx, authFrame); err != nil {
-		return fmt.Errorf("sending AUTH: %w", err)
+		return nil, fmt.Errorf("sending AUTH: %w", err)
 	}
 
-	// Start read loop to receive the response
+	// Start read loop to receive the response.
+	// Use the parent ctx (not hsCtx) so the ReadLoop survives after handshake
+	// completes — connectAndRun reuses it for the main loop.
 	readErr := make(chan error, 1)
 	go func() {
-		readErr <- mux.ReadLoop(hsCtx)
+		readErr <- mux.ReadLoop(ctx)
 	}()
 
 	// Wait for AUTH_OK or AUTH_REJECT
@@ -158,19 +163,19 @@ func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) error {
 		switch f.Type {
 		case protocol.FrameAuthOK:
 			a.logger.Info("authenticated with server")
-			return nil
+			return readErr, nil
 		case protocol.FrameAuthReject:
 			reason := string(f.Payload)
-			return fmt.Errorf("auth rejected: %s", reason)
+			return nil, fmt.Errorf("auth rejected: %s", reason)
 		default:
-			return fmt.Errorf("unexpected frame during handshake: %s", f.Type.String())
+			return nil, fmt.Errorf("unexpected frame during handshake: %s", f.Type.String())
 		}
 
 	case err := <-readErr:
-		return fmt.Errorf("connection lost during handshake: %w", err)
+		return nil, fmt.Errorf("connection lost during handshake: %w", err)
 
 	case <-hsCtx.Done():
-		return fmt.Errorf("handshake timeout")
+		return nil, fmt.Errorf("handshake timeout")
 	}
 }
 
