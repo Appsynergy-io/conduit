@@ -103,6 +103,11 @@ func (eb *EventBus) ClientCount() int {
 	return len(eb.clients)
 }
 
+// PublishTestEvent exposes publishEvent for integration tests.
+func (s *Server) PublishTestEvent(tenantID string, event Event) {
+	s.eventBus.Publish(tenantID, event)
+}
+
 // handleEventStream handles WebSocket upgrade and event streaming.
 // GET /api/v1/events/stream?channels=agents,shell,auth
 func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +214,13 @@ func (s *Server) eventWritePump(client *eventClient) {
 	}
 }
 
-// eventReadPump reads from the client (for close detection).
+// clientMessage is a message sent from the browser to the EventBus WebSocket.
+type clientMessage struct {
+	Type     string   `json:"type"`
+	Channels []string `json:"channels"`
+}
+
+// eventReadPump reads from the client and handles subscribe/unsubscribe/ping.
 func (s *Server) eventReadPump(client *eventClient) {
 	defer func() {
 		close(client.done)
@@ -217,11 +228,69 @@ func (s *Server) eventReadPump(client *eventClient) {
 	}()
 
 	for {
-		_, _, err := client.conn.Read(context.Background())
+		_, data, err := client.conn.Read(context.Background())
 		if err != nil {
 			return
 		}
-		// Discard any client messages — EventBus is server-push only
+
+		var msg clientMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			s.sendClientError(client, "invalid message format")
+			continue
+		}
+
+		switch msg.Type {
+		case "subscribe":
+			s.handleClientSubscribe(client, msg.Channels)
+		case "unsubscribe":
+			s.handleClientUnsubscribe(client, msg.Channels)
+		case "ping":
+			s.sendClientPong(client)
+		default:
+			s.sendClientError(client, "unknown message type")
+		}
+	}
+}
+
+// handleClientSubscribe adds channels to a client's subscriptions.
+func (s *Server) handleClientSubscribe(client *eventClient, channels []string) {
+	s.eventBus.mu.Lock()
+	defer s.eventBus.mu.Unlock()
+
+	for _, ch := range channels {
+		ch = strings.TrimSpace(ch)
+		if validChannels[ch] {
+			client.channels[ch] = true
+		}
+	}
+}
+
+// handleClientUnsubscribe removes channels from a client's subscriptions.
+func (s *Server) handleClientUnsubscribe(client *eventClient, channels []string) {
+	s.eventBus.mu.Lock()
+	defer s.eventBus.mu.Unlock()
+
+	for _, ch := range channels {
+		ch = strings.TrimSpace(ch)
+		delete(client.channels, ch)
+	}
+}
+
+// sendClientPong sends a pong response to the client.
+func (s *Server) sendClientPong(client *eventClient) {
+	msg, _ := json.Marshal(map[string]string{"type": "pong"})
+	select {
+	case client.send <- msg:
+	default:
+	}
+}
+
+// sendClientError sends an error message to the client.
+func (s *Server) sendClientError(client *eventClient, message string) {
+	msg, _ := json.Marshal(map[string]string{"type": "error", "message": message})
+	select {
+	case client.send <- msg:
+	default:
 	}
 }
 

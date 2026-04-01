@@ -10,15 +10,36 @@ interface EventBusMessage {
 
 type EventHandler = (event: EventBusMessage) => void
 
-export function useWebSocket() {
+/**
+ * Valid EventBus channels. Clients subscribe to specific channels
+ * to receive only relevant events (NIST SI-4).
+ */
+const ALL_CHANNELS = [
+  "agents",
+  "shell",
+  "files",
+  "auth",
+  "audit",
+  "metrics",
+  "exec",
+  "system",
+] as const
+
+export type EventChannel = (typeof ALL_CHANNELS)[number]
+
+export function useWebSocket(initialChannels?: EventChannel[]) {
   const wsRef = useRef<WebSocket | null>(null)
   const handlersRef = useRef<Map<string, Set<EventHandler>>>(new Map())
   const [connected, setConnected] = useState(false)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activeChannels = useRef<Set<string>>(
+    new Set(initialChannels ?? ALL_CHANNELS),
+  )
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const url = `${protocol}//${window.location.host}/api/v1/events/stream`
+    const channels = Array.from(activeChannels.current).join(",")
+    const url = `${protocol}//${window.location.host}/api/v1/events/stream${channels ? `?channels=${channels}` : ""}`
 
     const ws = new WebSocket(url)
     wsRef.current = ws
@@ -34,6 +55,10 @@ export function useWebSocket() {
     ws.onmessage = (event) => {
       try {
         const msg: EventBusMessage = JSON.parse(event.data)
+
+        // Skip control messages (pong, error)
+        if (msg.type === "pong" || msg.type === "error") return
+
         const channelHandlers = handlersRef.current.get(msg.channel)
         if (channelHandlers) {
           for (const handler of channelHandlers) handler(msg)
@@ -73,6 +98,10 @@ export function useWebSocket() {
     }
   }, [connect])
 
+  /**
+   * Subscribe to events on a specific channel. Returns an unsubscribe function.
+   * Use "*" to receive all events regardless of channel.
+   */
   const subscribe = useCallback((channel: string, handler: EventHandler) => {
     if (!handlersRef.current.has(channel)) {
       handlersRef.current.set(channel, new Set())
@@ -80,7 +109,6 @@ export function useWebSocket() {
     const handlers = handlersRef.current.get(channel)
     if (handlers) handlers.add(handler)
 
-    // Return unsubscribe function
     return () => {
       const set = handlersRef.current.get(channel)
       if (set) {
@@ -92,5 +120,25 @@ export function useWebSocket() {
     }
   }, [])
 
-  return { connected, subscribe }
+  /**
+   * Dynamically subscribe to additional server-side channels.
+   */
+  const subscribeChannels = useCallback((channels: EventChannel[]) => {
+    for (const ch of channels) activeChannels.current.add(ch)
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "subscribe", channels }))
+    }
+  }, [])
+
+  /**
+   * Dynamically unsubscribe from server-side channels.
+   */
+  const unsubscribeChannels = useCallback((channels: EventChannel[]) => {
+    for (const ch of channels) activeChannels.current.delete(ch)
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "unsubscribe", channels }))
+    }
+  }, [])
+
+  return { connected, subscribe, subscribeChannels, unsubscribeChannels }
 }
