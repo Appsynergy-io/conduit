@@ -94,7 +94,7 @@ const createTokenSchema = z.object({
       "Name must start and end with alphanumeric characters"
     ),
   type: z.enum(["single_use", "persistent"]),
-  ttlHours: z.coerce.number().int().min(1, "Minimum 1 hour").max(8760, "Maximum 8760 hours (1 year)"),
+  ttlHours: z.number().int().min(1, "Minimum 1 hour").max(8760, "Maximum 8760 hours (1 year)"),
   labels: z.string().optional(),
 })
 
@@ -458,7 +458,13 @@ export default function TokensPage() {
                   <FormItem>
                     <FormLabel>Expires in (hours)</FormLabel>
                     <FormControl>
-                      <Input type="number" min={1} max={8760} {...field} />
+                      <Input
+                        type="number"
+                        min={1}
+                        max={8760}
+                        {...field}
+                        onChange={(e) => field.onChange(e.target.valueAsNumber || 0)}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
