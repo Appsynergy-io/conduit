@@ -155,7 +155,7 @@ func (s *Server) buildRouter() chi.Router {
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Auth(s.jwtMgr))
+			r.Use(middleware.Auth(s.jwtMgr, s))
 			r.Use(middleware.NoCacheHeaders)
 
 			// Auth session management
@@ -170,6 +170,11 @@ func (s *Server) buildRouter() chi.Router {
 
 			// Recovery codes (authenticated — user generates their own codes)
 			r.Post("/auth/recovery/generate", s.handleGenerateRecoveryCodes)
+
+			// CI tokens (NIST IA-5 — machine-to-machine auth)
+			r.Get("/auth/ci-tokens", s.handleListCITokens)
+			r.Post("/auth/ci-tokens", s.handleCreateCIToken)
+			r.Delete("/auth/ci-tokens/{tokenId}", s.handleRevokeCIToken)
 
 			// Users
 			r.Get("/users", s.handleListUsers)

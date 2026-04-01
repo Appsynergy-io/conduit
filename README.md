@@ -90,7 +90,7 @@ Status: `spec-only` | `in-progress` | `done`
 | CLI browser device flow (passkey → CLI token) | spec-only | Auth, JWT |
 | CLI credential storage (encrypted, per-profile) | spec-only | CLI |
 | All authenticated sessions (web, CLI, CI) visible and revocable | done | Auth, DB |
-| CI token support (`CONDUIT_TOKEN` env var, scoped, revocable) | spec-only | Auth, DB |
+| CI token support (`CONDUIT_TOKEN` env var, scoped, revocable) | done | Auth, DB |
 
 ### Agent & Connections
 
