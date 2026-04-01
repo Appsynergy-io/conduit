@@ -94,7 +94,7 @@ func (a *Agent) Run(ctx context.Context) error {
 // connectAndRun establishes a connection, performs the handshake, and runs
 // the main loop. Returns when the connection is lost or ctx is canceled.
 func (a *Agent) connectAndRun(ctx context.Context) error {
-	mux, err := a.connect(ctx)
+	mux, readErr, err := a.connect(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting: %w", err)
 	}
@@ -112,13 +112,8 @@ func (a *Agent) connectAndRun(ctx context.Context) error {
 
 	a.logger.Info("connected to server", "agent_id", a.cfg.AgentID)
 
-	// Start read loop
-	readErr := make(chan error, 1)
-	go func() {
-		readErr <- mux.ReadLoop(ctx)
-	}()
-
-	// Main loop: handle frames, send pings and agent info
+	// Main loop: handle frames, send pings and agent info.
+	// ReadLoop was already started during handshake and continues running.
 	return a.runLoop(ctx, mux, readErr)
 }
 
