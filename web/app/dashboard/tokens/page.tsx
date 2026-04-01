@@ -133,6 +133,7 @@ export default function TokensPage() {
   const [createdToken, setCreatedToken] = useState<string | null>(null)
   const [platforms, setPlatforms] = useState<Platform[]>([])
   const [installScriptURL, setInstallScriptURL] = useState("")
+  const [isDevMode, setIsDevMode] = useState(false)
   const [selectedOS, setSelectedOS] = useState<SelectedOS>("linux")
   const [revokeTarget, setRevokeTarget] = useState<JoinToken | null>(null)
   const [createError, setCreateError] = useState("")
@@ -172,6 +173,7 @@ export default function TokensPage() {
         const data = await res.json()
         setPlatforms(data.platforms ?? [])
         setInstallScriptURL(data.installScript ?? "")
+        setIsDevMode(data.devMode === true)
       }
     } catch {
       // Non-critical — install commands still work with manual download
@@ -240,17 +242,19 @@ export default function TokensPage() {
   const getInstallCommand = (os: SelectedOS): string => {
     if (!createdToken) return ""
 
+    const curlFlag = isDevMode ? "-sSLk" : "-sSL"
+    const devFlag = isDevMode ? " --dev-insecure" : ""
+
     if (installScriptURL) {
-      const insecureFlag = installScriptURL.includes("localhost") ? " --dev-insecure" : ""
-      return `curl -sSL ${installScriptURL} | sh -s --${insecureFlag} ${createdToken}`
+      return `curl ${curlFlag} ${installScriptURL} | sh -s --${devFlag} ${createdToken}`
     }
 
     const baseURL = window.location.origin
     const binary = os === "windows" ? "conduit.exe" : "conduit"
     return [
-      `curl -sSL -o ${binary} "${baseURL}/api/v1/download/agent?os=${os}&arch=amd64"`,
+      `curl ${curlFlag} -o ${binary} "${baseURL}/api/v1/download/agent?os=${os}&arch=amd64"`,
       os !== "windows" ? `chmod +x ${binary}` : "",
-      `${os === "windows" ? ".\\" : "./"}${binary} join ${baseURL} ${createdToken}`,
+      `${os === "windows" ? ".\\" : "./"}${binary} join ${baseURL} ${createdToken}${devFlag}`,
     ]
       .filter(Boolean)
       .join(" && ")
@@ -259,7 +263,8 @@ export default function TokensPage() {
   const getManualJoinCommand = (): string => {
     if (!createdToken) return ""
     const baseURL = installScriptURL ? installScriptURL.replace("/install.sh", "") : window.location.origin
-    return `conduit join ${baseURL} ${createdToken}`
+    const devFlag = isDevMode ? " --dev-insecure" : ""
+    return `conduit join ${baseURL} ${createdToken}${devFlag}`
   }
 
   const tokenStatus = (t: JoinToken): { label: string; variant: "default" | "secondary" | "destructive" } => {

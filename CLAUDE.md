@@ -330,7 +330,12 @@ Every endpoint or handler must have passing unit tests BEFORE committing. No exc
 - Tests are not optional polish — they are a gate. Untested endpoints do not ship.
 
 ### Implementation Status Tracking (MANDATORY)
-After completing any feature, update its status in the README.md implementation status table before committing. Set to `in-progress` when you start work, `done` when tests pass. Never commit code for a feature without updating its status.
+After completing any feature, update its status in the README.md implementation status table before committing. Never commit code for a feature without updating its status.
+
+**Status format — use colored checkmark emoji + label:**
+- ✅ `done` — feature complete with passing tests
+- 🟡 `in-progress` — actively being worked on
+- ❌ `spec-only` — specified but not yet started
 
 ### Linting & Formatting
 - **Go:** `golangci-lint` with project `.golangci.yml` — includes `gofumpt`, `govet`, `errcheck`, `staticcheck`, `gosec`, `bodyclose`, `sqlclosecheck`, `exhaustive`, `noctx`, `unparam`, `wastedassign`, `errorlint`, `tenv`

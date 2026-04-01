@@ -106,8 +106,9 @@ func (s *Server) handleDownloadAgent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	// Determine the server's base URL for download links
 	baseURL := s.serverBaseURL(r)
+	devMode := s.cfg.Server.Mode == "dev"
 
-	script := generateInstallScript(baseURL)
+	script := generateInstallScript(baseURL, devMode)
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -130,17 +131,24 @@ func (s *Server) serverBaseURL(r *http.Request) string {
 }
 
 // generateInstallScript returns a POSIX-compatible install script.
-func generateInstallScript(baseURL string) string {
+// When devMode is true, the script auto-enables insecure flags for self-signed certs.
+func generateInstallScript(baseURL string, devMode bool) string {
+	devInsecureDefault := `DEV_INSECURE=""`
+	curlFlag := "-sSL"
+	if devMode {
+		devInsecureDefault = `DEV_INSECURE="--dev-insecure"`
+		curlFlag = "-sSLk"
+	}
+
 	return `#!/bin/sh
 # Conduit Agent Installer
-# Usage: curl -sSL ` + baseURL + `/install.sh | sh -s -- <join-token>
-#   or:  curl -sSL ` + baseURL + `/install.sh | sh -s -- --dev-insecure <join-token>
+# Usage: curl ` + curlFlag + ` ` + baseURL + `/install.sh | sh -s -- <join-token>
 set -e
 
 CONDUIT_URL="` + baseURL + `"
 
 # --- Parse arguments ---
-DEV_INSECURE=""
+` + devInsecureDefault + `
 TOKEN=""
 for arg in "$@"; do
   case "$arg" in
@@ -245,7 +253,8 @@ func (s *Server) handleListAvailableBinaries(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"platforms": platforms,
-		"installScript": s.serverBaseURL(r) + "/install.sh",
+		"platforms":      platforms,
+		"installScript":  s.serverBaseURL(r) + "/install.sh",
+		"devMode":        s.cfg.Server.Mode == "dev",
 	})
 }
