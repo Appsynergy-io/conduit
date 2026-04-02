@@ -157,7 +157,7 @@ func TestHandshake_Success(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	mux, _, err := a.connect(ctx)
+	mux, _, err := a.connectWS(ctx)
 	require.NoError(t, err)
 	defer mux.Close()
 }
@@ -203,7 +203,7 @@ func TestHandshake_AuthReject(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, _, err := a.connect(ctx)
+	_, _, err := a.connectWS(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "auth rejected")
 }

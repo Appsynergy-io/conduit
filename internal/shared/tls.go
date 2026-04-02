@@ -10,11 +10,17 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"strings"
 	"time"
 )
+
+// pqcCurvePreferences defines the TLS key exchange preference order.
+// X25519MLKEM768 (PQC hybrid) is preferred; X25519 (classical) is the fallback
+// for clients that do not support ML-KEM.
+var pqcCurvePreferences = []tls.CurveID{tls.X25519MLKEM768, tls.X25519}
 
 // DevTLSResult holds the generated self-signed cert and fingerprint for dev mode.
 type DevTLSResult struct {
@@ -70,9 +76,10 @@ func GenerateDevTLS() (*DevTLSResult, error) {
 	fpHex := hex.EncodeToString(fingerprint[:])
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		MinVersion:   tls.VersionTLS13,
-		MaxVersion:   tls.VersionTLS13,
+		Certificates:     []tls.Certificate{tlsCert},
+		MinVersion:       tls.VersionTLS13,
+		MaxVersion:       tls.VersionTLS13,
+		CurvePreferences: pqcCurvePreferences,
 	}
 
 	return &DevTLSResult{
@@ -91,6 +98,25 @@ func ProductionTLSConfig() *tls.Config {
 			tls.TLS_AES_128_GCM_SHA256,
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 		},
+		CurvePreferences: pqcCurvePreferences,
+	}
+}
+
+// PQCVerifyConnection returns a VerifyConnection callback that logs when a TLS
+// connection falls back to classical key exchange instead of PQC.
+// Per CLAUDE.md: "Every use of a classical algorithm where PQC was available is logged."
+func PQCVerifyConnection(logger *slog.Logger) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		if cs.CurveID != tls.X25519MLKEM768 && cs.CurveID != 0 {
+			logger.Warn("classical TLS key exchange used instead of PQC",
+				"negotiated_curve", cs.CurveID.String(),
+				"expected", "X25519MLKEM768",
+				"server_name", cs.ServerName,
+				"tls_version", cs.Version,
+				"reason", "client does not support ML-KEM",
+			)
+		}
+		return nil
 	}
 }
 
