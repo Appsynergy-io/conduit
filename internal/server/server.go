@@ -19,6 +19,7 @@ import (
 	"github.com/appsynergy-io/conduit/internal/auth"
 	"github.com/appsynergy-io/conduit/internal/db"
 	"github.com/appsynergy-io/conduit/internal/middleware"
+	"github.com/appsynergy-io/conduit/internal/protocol"
 	"github.com/appsynergy-io/conduit/internal/shared"
 )
 
@@ -42,6 +43,7 @@ type Server struct {
 	setupLimiter     *middleware.RateLimiter
 	execJobs         map[string]context.CancelFunc
 	execJobsMu       sync.Mutex
+	agentMetrics     sync.Map // agentID → *protocol.AgentInfoPayload
 	quicTransport     *quic.Transport
 	quicEarlyListener *quic.EarlyListener
 	http3Srv          *http3.Server
@@ -121,6 +123,15 @@ func (s *Server) Router() chi.Router {
 	return s.router
 }
 
+// cachedMetrics returns the latest metrics for an agent, or nil if unavailable.
+func (s *Server) cachedMetrics(agentID string) *protocol.AgentInfoPayload {
+	v, ok := s.agentMetrics.Load(agentID)
+	if !ok {
+		return nil
+	}
+	return v.(*protocol.AgentInfoPayload)
+}
+
 // extractPort extracts the port number from an address string like ":443" or "0.0.0.0:8443".
 // Returns the port string without colon, or "" if unparseable.
 func (s *Server) extractPort(addr string) string {
@@ -177,6 +188,8 @@ func (s *Server) buildRouter() chi.Router {
 			r.Post("/auth/webauthn/login/begin", s.handleWebAuthnLoginBegin)
 			r.Post("/auth/webauthn/login/finish", s.handleWebAuthnLoginFinish)
 			r.Post("/auth/recovery/verify", s.handleVerifyRecoveryCode)
+			r.Post("/auth/device/begin", s.handleBeginDeviceFlow)
+			r.Post("/auth/device/poll", s.handlePollDeviceFlow)
 		})
 
 		// Agent registration (token-based auth, no JWT)
@@ -190,6 +203,7 @@ func (s *Server) buildRouter() chi.Router {
 			// Auth session management
 			r.Get("/auth/me", s.handleAuthMe)
 			r.Post("/auth/logout", s.handleLogout)
+			r.Post("/auth/device/authorize", s.handleAuthorizeDevice)
 
 			// WebAuthn passkey management (authenticated)
 			r.Post("/auth/webauthn/register/begin", s.handleWebAuthnRegisterBegin)

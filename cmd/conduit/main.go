@@ -47,6 +47,8 @@ func main() {
 	root.AddCommand(uninstallCmd())
 	root.AddCommand(tokenCmd())
 	root.AddCommand(shellCmd())
+	root.AddCommand(loginCmd())
+	root.AddCommand(completionCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -54,7 +56,15 @@ func main() {
 }
 
 // loginClient prompts for server/credentials and returns an authenticated client.
+// If stored credentials exist (from `conduit login`), uses those first.
 func loginClient() (*tui.Client, error) {
+	// Try stored credentials first
+	if cred := getCredential("default"); cred != nil {
+		client := tui.NewClient(cred.ServerURL, cred.DevInsecure)
+		client.SetToken(cred.AccessToken)
+		return client, nil
+	}
+
 	serverURL := flagServer
 	if serverURL == "" {
 		fmt.Print("Server URL: ")

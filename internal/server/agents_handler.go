@@ -33,6 +33,24 @@ type agentResponse struct {
 	CreatedAt   string           `json:"createdAt"`
 }
 
+// agentDetailResponse extends agentResponse with live metrics.
+type agentDetailResponse struct {
+	agentResponse
+	SystemInfo *agentSystemInfo `json:"systemInfo,omitempty"`
+}
+
+type agentSystemInfo struct {
+	CPUPercent      float64 `json:"cpuPercent"`
+	MemoryTotalBytes uint64 `json:"memoryTotalBytes"`
+	MemoryUsedBytes  uint64 `json:"memoryUsedBytes"`
+	DiskTotalBytes   uint64 `json:"diskTotalBytes"`
+	DiskUsedBytes    uint64 `json:"diskUsedBytes"`
+	UptimeSeconds    int64  `json:"uptimeSeconds"`
+	LoadAvg1         float64 `json:"loadAvg1,omitempty"`
+	LoadAvg5         float64 `json:"loadAvg5,omitempty"`
+	LoadAvg15        float64 `json:"loadAvg15,omitempty"`
+}
+
 func toAgentResponse(a db.Agent) agentResponse {
 	resp := agentResponse{
 		ID:          a.ID,
@@ -135,7 +153,21 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toAgentResponse(*agent))
+	detail := agentDetailResponse{agentResponse: toAgentResponse(*agent)}
+	if m := s.cachedMetrics(agentID); m != nil {
+		detail.SystemInfo = &agentSystemInfo{
+			CPUPercent:       m.CPUPercent,
+			MemoryTotalBytes: m.MemTotal,
+			MemoryUsedBytes:  m.MemUsed,
+			DiskTotalBytes:   m.DiskTotal,
+			DiskUsedBytes:    m.DiskUsed,
+			UptimeSeconds:    m.Uptime,
+			LoadAvg1:         m.LoadAvg1,
+			LoadAvg5:         m.LoadAvg5,
+			LoadAvg15:        m.LoadAvg15,
+		}
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 // handleDeleteAgent removes an agent.
