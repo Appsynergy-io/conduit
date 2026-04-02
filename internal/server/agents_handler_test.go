@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/appsynergy-io/conduit/internal/db"
+	"github.com/appsynergy-io/conduit/internal/protocol"
 )
 
 func seedAgent(t *testing.T, database *db.DB, tenantID, hostname, status string) string {
@@ -213,6 +214,75 @@ func TestGetAgent_CrossTenantBlocked(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code, "cross-tenant access must be blocked")
+}
+
+func TestGetAgent_WithMetrics(t *testing.T) {
+	srv, jwtMgr, database := newTestServerWithDB(t, "dev")
+	ctx := context.Background()
+
+	tenantID := uuid.NewString()
+	require.NoError(t, database.CreateTenant(ctx, tenantID, "Test"))
+
+	agentID := seedAgent(t, database, tenantID, "metrics-01", "online")
+	token, _ := jwtMgr.IssueAccessToken("admin", tenantID, "sess", []string{"org_admin"}, []string{"remote-access"})
+
+	// Store cached metrics
+	srv.StoreAgentMetricsForTesting(agentID, &protocol.AgentInfoPayload{
+		CPUPercent: 42.5,
+		MemTotal:   8589934592,  // 8 GB
+		MemUsed:    4294967296,  // 4 GB
+		DiskTotal:  107374182400, // 100 GB
+		DiskUsed:   53687091200, // 50 GB
+		Uptime:     86400,
+		LoadAvg1:   1.5,
+		LoadAvg5:   1.2,
+		LoadAvg15:  0.9,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agentID, nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, agentID, resp["id"])
+
+	// Verify systemInfo is populated
+	sysInfo, ok := resp["systemInfo"].(map[string]interface{})
+	require.True(t, ok, "response must include systemInfo")
+	assert.InDelta(t, 42.5, sysInfo["cpuPercent"], 0.01)
+	assert.Equal(t, float64(8589934592), sysInfo["memoryTotalBytes"])
+	assert.Equal(t, float64(4294967296), sysInfo["memoryUsedBytes"])
+	assert.Equal(t, float64(107374182400), sysInfo["diskTotalBytes"])
+	assert.Equal(t, float64(53687091200), sysInfo["diskUsedBytes"])
+	assert.Equal(t, float64(86400), sysInfo["uptimeSeconds"])
+	assert.InDelta(t, 1.5, sysInfo["loadAvg1"], 0.01)
+}
+
+func TestGetAgent_WithoutMetrics(t *testing.T) {
+	srv, jwtMgr, database := newTestServerWithDB(t, "dev")
+	ctx := context.Background()
+
+	tenantID := uuid.NewString()
+	require.NoError(t, database.CreateTenant(ctx, tenantID, "Test"))
+
+	agentID := seedAgent(t, database, tenantID, "no-metrics-01", "offline")
+	token, _ := jwtMgr.IssueAccessToken("admin", tenantID, "sess", []string{"org_admin"}, []string{"remote-access"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agentID, nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, agentID, resp["id"])
+	assert.Nil(t, resp["systemInfo"], "offline agent should not have systemInfo")
 }
 
 func TestDeleteAgent_Success(t *testing.T) {
