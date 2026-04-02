@@ -100,10 +100,14 @@ type FileReadResponse struct {
 }
 
 // FileWriteRequest is sent by the server to write a file.
+// For chunked/resumable uploads, Offset and UploadID are set.
 type FileWriteRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"` // base64-encoded file content
-	Mode    string `json:"mode,omitempty"` // e.g. "0644", defaults to 0644
+	Path     string `json:"path"`
+	Content  string `json:"content"`            // base64-encoded file content
+	Mode     string `json:"mode,omitempty"`     // e.g. "0644", defaults to 0644
+	Offset   int64  `json:"offset,omitempty"`   // byte offset for chunked writes
+	Truncate bool   `json:"truncate,omitempty"` // create/truncate file (first chunk)
+	UploadID string `json:"uploadId,omitempty"` // correlates chunks for the same upload
 }
 
 // FileWriteResponse is the response to a FILE_WRITE.

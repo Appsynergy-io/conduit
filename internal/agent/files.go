@@ -184,6 +184,7 @@ func (a *Agent) handleFileRead(ctx context.Context, mux protocol.FrameMux, f *pr
 }
 
 // handleFileWrite writes content to a file.
+// Supports both atomic writes (no Offset/UploadID) and chunked writes for resumable uploads.
 func (a *Agent) handleFileWrite(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileWriteRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
@@ -204,11 +205,11 @@ func (a *Agent) handleFileWrite(ctx context.Context, mux protocol.FrameMux, f *p
 		return
 	}
 
-	// Enforce write size limit (OWASP API4, NIST REC-API-14)
+	// Enforce per-chunk write size limit (OWASP API4, NIST REC-API-14)
 	if int64(len(data)) > maxFileWriteBytes {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
 			Path:  cleanPath,
-			Error: fmt.Sprintf("file too large: %d bytes exceeds %d byte limit", len(data), maxFileWriteBytes),
+			Error: fmt.Sprintf("chunk too large: %d bytes exceeds %d byte limit", len(data), maxFileWriteBytes),
 		})
 		return
 	}
@@ -230,6 +231,13 @@ func (a *Agent) handleFileWrite(ctx context.Context, mux protocol.FrameMux, f *p
 		return
 	}
 
+	// Chunked write: write at offset (for resumable uploads)
+	if req.UploadID != "" || req.Offset > 0 {
+		a.writeChunk(ctx, mux, f, cleanPath, data, mode, req.Offset, req.Truncate)
+		return
+	}
+
+	// Atomic write (original behavior)
 	if err := os.WriteFile(cleanPath, data, mode); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
 			Path:  cleanPath,
@@ -244,6 +252,50 @@ func (a *Agent) handleFileWrite(ctx context.Context, mux protocol.FrameMux, f *p
 		Path:     cleanPath,
 		Size:     int64(len(data)),
 		Checksum: fmt.Sprintf("%x", checksum),
+	})
+}
+
+// writeChunk writes data at a specific offset within a file for chunked/resumable uploads.
+func (a *Agent) writeChunk(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame,
+	path string, data []byte, mode os.FileMode, offset int64, truncate bool) {
+
+	flags := os.O_WRONLY | os.O_CREATE
+	if truncate {
+		flags |= os.O_TRUNC
+	}
+
+	file, err := os.OpenFile(path, flags, mode)
+	if err != nil {
+		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
+			Path:  path,
+			Error: err.Error(),
+		})
+		return
+	}
+	defer file.Close()
+
+	if offset > 0 {
+		if _, err := file.Seek(offset, 0); err != nil {
+			a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
+				Path:  path,
+				Error: fmt.Sprintf("seek to offset %d: %s", offset, err),
+			})
+			return
+		}
+	}
+
+	n, err := file.Write(data)
+	if err != nil {
+		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
+			Path:  path,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
+		Path: path,
+		Size: int64(n),
 	})
 }
 
