@@ -52,6 +52,11 @@ func NewClient(serverURL string, devInsecure bool) *Client {
 	}
 }
 
+// SetToken sets the JWT token directly (for stored credential flows).
+func (c *Client) SetToken(token string) {
+	c.Token = token
+}
+
 // Login authenticates with email+password (dev mode) and stores the JWT.
 func (c *Client) Login(email, password string) error {
 	body, _ := json.Marshal(map[string]string{

@@ -11,6 +11,7 @@ import {
   Terminal,
 } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useMemo, useState } from "react"
 import type { Agent } from "@/app/dashboard/page"
 import { Badge } from "@/components/ui/badge"
@@ -92,6 +93,7 @@ function sortAgents(agents: Agent[], field: SortField, dir: SortDir): Agent[] {
 // ── Component ──
 
 export function AgentList({ agents, loading }: { agents: Agent[]; loading: boolean }) {
+  const router = useRouter()
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [sortField, setSortField] = useState<SortField>("hostname")
@@ -248,7 +250,11 @@ export function AgentList({ agents, loading }: { agents: Agent[]; loading: boole
             </TableHeader>
             <TableBody>
               {filtered.map((agent) => (
-                <TableRow key={agent.id}>
+                <TableRow
+                  key={agent.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => router.push(`/dashboard/agents?id=${agent.id}`)}
+                >
                   <TableCell className="font-medium">
                     {agent.displayName ?? agent.hostname}
                   </TableCell>
@@ -261,7 +267,7 @@ export function AgentList({ agents, loading }: { agents: Agent[]; loading: boole
                   <TableCell className="hidden lg:table-cell">
                     {formatTime(agent.lastSeenAt ?? agent.connectedAt)}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
                       <Button variant="ghost" size="icon" asChild>
                         <Link href={`/dashboard/terminal?agent=${agent.id}`}>

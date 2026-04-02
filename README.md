@@ -133,8 +133,8 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | Account recovery via one-time recovery codes (Argon2id hashed, single-use) | ✅ done | Auth, Users, Passkeys |
 | Admin-assisted account recovery (reset user auth state) | ✅ done | Auth, Users, RBAC |
 | SAML/OIDC SSO (passkeys remain primary) | ❌ spec-only | Auth, Users |
-| CLI browser device flow (passkey → CLI token) | ❌ spec-only | Auth, JWT |
-| CLI credential storage (encrypted, per-profile) | ❌ spec-only | CLI |
+| CLI browser device flow (passkey → CLI token) | ✅ done | Auth, JWT |
+| CLI credential storage (encrypted, per-profile) | ✅ done | CLI |
 | All authenticated sessions (web, CLI, CI) visible and revocable | ✅ done | Auth, DB |
 | CI token support (`CONDUIT_TOKEN` env var, scoped, revocable) | ✅ done | Auth, DB |
 
@@ -153,7 +153,7 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | Windows amd64 agent build | 🟡 in-progress | Agent |
 | macOS arm64 agent build + launchd service | ✅ done | Agent |
 | Agent auto-update with rollback (signed binary push) | ❌ spec-only | Agent, Binary Signing |
-| Full host visibility per agent: CPU, memory, disk, network, services, ports | 🟡 in-progress | CWP |
+| Full host visibility per agent: CPU, memory, disk, network, services, ports | 🟡 in-progress | CWP, Dashboard |
 | Agent metrics collection (CPU, RAM, disk, load, uptime — `AGENT_INFO` frames) | ✅ done | CWP |
 | Universal resource labelling system for surgical targeting | ✅ done | DB |
 | Agent installed as system service (systemd / launchd / Windows) via `conduit join` | ✅ done | Agent |
@@ -192,7 +192,7 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | CLI exec commands — bulk exec from terminal | ❌ spec-only | CLI, Bulk Exec |
 | CLI group, user, audit management commands | ❌ spec-only | CLI, Auth |
 | CLI lights-out basic (reboot/poweroff via agent) | ❌ spec-only | CLI, CWP |
-| Shell completions (bash, zsh, fish, PowerShell) | ❌ spec-only | CLI |
+| Shell completions (bash, zsh, fish, PowerShell) | ✅ done | CLI |
 
 ### Bulk Operations
 

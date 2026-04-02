@@ -159,11 +159,12 @@ func (s *Server) handleAgentFrame(ctx context.Context, agent *ConnectedAgent, f 
 		s.db.UpdateAgentStatus(ctx, agent.AgentID, "online")
 
 	case protocol.FrameAgentInfo:
-		// Agent metrics — update last seen + publish to EventBus (NIST SI-4)
+		// Agent metrics — update last seen + cache + publish to EventBus (NIST SI-4)
 		s.db.UpdateAgentStatus(ctx, agent.AgentID, "online")
 
 		var metrics protocol.AgentInfoPayload
 		if err := protocol.UnmarshalPayload(f.Payload, &metrics); err == nil {
+			s.agentMetrics.Store(agent.AgentID, &metrics)
 			s.publishEvent(ctx, agent.TenantID, Event{
 				Channel: "metrics",
 				Type:    "agent.metrics",
@@ -389,6 +390,7 @@ func (s *Server) onAgentAuthenticated(ctx context.Context, cancel context.Cancel
 	// Agent disconnected — cleanup
 	s.sessionMgr.CleanupAgentSessions(ctx, agent.ID)
 	s.agentRegistry.Unregister(agent.ID)
+	s.agentMetrics.Delete(agent.ID)
 	s.db.UpdateAgentStatus(ctx, agent.ID, "offline")
 
 	s.logger.Info("agent disconnected", "agent_id", agent.ID, "hostname", agent.Hostname)
