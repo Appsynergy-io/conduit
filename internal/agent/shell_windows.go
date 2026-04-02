@@ -26,7 +26,7 @@ func (s *shellSession) Close() {
 }
 
 // startShell is not yet implemented on Windows (ConPTY support planned).
-func (a *Agent) startShell(ctx context.Context, mux *protocol.Mux, streamID uint32, payload *protocol.ShellStartPayload) {
+func (a *Agent) startShell(ctx context.Context, mux protocol.FrameMux, streamID uint32, payload *protocol.ShellStartPayload) {
 	a.logger.Warn("shell sessions not yet supported on Windows")
 	a.sendShellExit(ctx, mux, streamID, payload.SessionID, -1)
 }
@@ -35,7 +35,7 @@ func (a *Agent) startShell(ctx context.Context, mux *protocol.Mux, streamID uint
 func (a *Agent) resizeShell(_ uint32, _ *protocol.ShellResizePayload) {}
 
 // sendShellExit sends a SHELL_EXIT frame to the server.
-func (a *Agent) sendShellExit(ctx context.Context, mux *protocol.Mux, streamID uint32, sessionID string, exitCode int) {
+func (a *Agent) sendShellExit(ctx context.Context, mux protocol.FrameMux, streamID uint32, sessionID string, exitCode int) {
 	payload := protocol.ShellExitPayload{
 		SessionID: sessionID,
 		ExitCode:  exitCode,

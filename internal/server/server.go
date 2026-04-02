@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 
 	"github.com/appsynergy-io/conduit/internal/auth"
 	"github.com/appsynergy-io/conduit/internal/db"
@@ -40,6 +42,10 @@ type Server struct {
 	setupLimiter     *middleware.RateLimiter
 	execJobs         map[string]context.CancelFunc
 	execJobsMu       sync.Mutex
+	quicTransport     *quic.Transport
+	quicEarlyListener *quic.EarlyListener
+	http3Srv          *http3.Server
+	http3Listener     *alpnDemuxListener
 }
 
 // New creates a Server with all dependencies wired.
@@ -115,6 +121,16 @@ func (s *Server) Router() chi.Router {
 	return s.router
 }
 
+// extractPort extracts the port number from an address string like ":443" or "0.0.0.0:8443".
+// Returns the port string without colon, or "" if unparseable.
+func (s *Server) extractPort(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	return port
+}
+
 // buildRouter assembles the middleware chain and routes.
 // Middleware order: Recover → RequestID → SecurityHeaders → MaxBody → RequireJSON → routes
 // Auth is applied per-route group, not globally (some routes are public).
@@ -124,7 +140,7 @@ func (s *Server) buildRouter() chi.Router {
 	// Global middleware (applied to all routes)
 	r.Use(middleware.Recover)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.SecurityHeaders)
+	r.Use(middleware.SecurityHeadersWithAltSvc(s.extractPort(s.cfg.Server.HTTPAddr)))
 	r.Use(middleware.MaxBody(1 << 20)) // 1MB default
 
 	// Public routes (no auth)
@@ -285,6 +301,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	if s.tlsConfig != nil {
+		// Enable HTTP/2 ALPN negotiation on the TLS config.
+		configureHTTP2(s.tlsConfig)
 		ln = tls.NewListener(ln, s.tlsConfig)
 	}
 
@@ -302,6 +320,14 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}()
 
+	// Start QUIC services (agent QUIC + HTTP/3) on a shared UDP listener.
+	// Both protocols share one UDP port, demultiplexed by ALPN.
+	if s.cfg.Server.QUICAddr != "" && s.tlsConfig != nil {
+		if quicErr := s.startQUICServices(ctx); quicErr != nil {
+			s.logger.ErrorContext(ctx, "QUIC services failed — agents will use WebSocket only, browsers HTTP/2 only", "error", quicErr)
+		}
+	}
+
 	return nil
 }
 
@@ -313,5 +339,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.InfoContext(ctx, "shutting down server")
 	s.sessionMgr.Stop()
 	s.webhooks.Stop()
+	s.eventBus.StopThrottleTimers()
+
+	s.stopQUICServices()
 	return s.httpSrv.Shutdown(ctx)
 }

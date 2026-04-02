@@ -27,16 +27,26 @@ const (
 	infoInterval = 60 * time.Second
 )
 
+const (
+	// Transport alternation: switch transport after this many consecutive failures.
+	maxConsecutiveFailures = 3
+)
+
 // Agent is the client-side daemon that connects to a Conduit server,
 // authenticates via CWP, and handles shell/exec/file operations.
 type Agent struct {
 	cfg    *Config
 	logger *slog.Logger
 
-	mux    *protocol.Mux
-	muxMu  sync.RWMutex
-	shells map[uint32]*shellSession // streamID → shell session
-	shellMu sync.Mutex
+	mux       protocol.FrameMux
+	muxMu     sync.RWMutex
+	shells    map[uint32]*shellSession // streamID → shell session
+	shellMu   sync.Mutex
+	transport string // "quic" or "websocket" — current transport
+
+	// Transport alternation state
+	quicFailures int
+	wsFailures   int
 }
 
 // New creates a new Agent with the given config.
@@ -94,7 +104,7 @@ func (a *Agent) Run(ctx context.Context) error {
 // connectAndRun establishes a connection, performs the handshake, and runs
 // the main loop. Returns when the connection is lost or ctx is canceled.
 func (a *Agent) connectAndRun(ctx context.Context) error {
-	mux, readErr, err := a.connect(ctx)
+	mux, readErr, transport, err := a.connectWithFallback(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting: %w", err)
 	}
@@ -102,15 +112,24 @@ func (a *Agent) connectAndRun(ctx context.Context) error {
 
 	a.muxMu.Lock()
 	a.mux = mux
+	a.transport = transport
 	a.muxMu.Unlock()
 
 	defer func() {
 		a.muxMu.Lock()
 		a.mux = nil
+		a.transport = ""
 		a.muxMu.Unlock()
 	}()
 
-	a.logger.Info("connected to server", "agent_id", a.cfg.AgentID)
+	// Reset failure counter for the successful transport
+	if transport == "quic" {
+		a.quicFailures = 0
+	} else {
+		a.wsFailures = 0
+	}
+
+	a.logger.Info("connected to server", "agent_id", a.cfg.AgentID, "transport", transport)
 
 	// Main loop: handle frames, send pings and agent info.
 	// ReadLoop was already started during handshake and continues running.
@@ -119,7 +138,7 @@ func (a *Agent) connectAndRun(ctx context.Context) error {
 
 // runLoop is the main agent event loop. It handles incoming frames,
 // sends periodic pings, and reports system info.
-func (a *Agent) runLoop(ctx context.Context, mux *protocol.Mux, readErr <-chan error) error {
+func (a *Agent) runLoop(ctx context.Context, mux protocol.FrameMux, readErr <-chan error) error {
 	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
 
@@ -161,7 +180,7 @@ func (a *Agent) runLoop(ctx context.Context, mux *protocol.Mux, readErr <-chan e
 }
 
 // handleFrame processes a single frame from the server.
-func (a *Agent) handleFrame(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFrame(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	switch f.Type {
 	case protocol.FramePing:
 		// Respond with PONG
@@ -207,7 +226,7 @@ func (a *Agent) handleFrame(ctx context.Context, mux *protocol.Mux, f *protocol.
 }
 
 // sendAgentInfo collects system metrics and sends an AGENT_INFO frame.
-func (a *Agent) sendAgentInfo(ctx context.Context, mux *protocol.Mux) {
+func (a *Agent) sendAgentInfo(ctx context.Context, mux protocol.FrameMux) {
 	info := collectSysInfo()
 
 	f, err := protocol.NewFrame(protocol.FrameAgentInfo, 0, info)

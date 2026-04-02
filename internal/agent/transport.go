@@ -14,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
+	"github.com/quic-go/quic-go"
 
 	"github.com/appsynergy-io/conduit/internal/protocol"
 )
@@ -22,9 +23,74 @@ const (
 	handshakeTimeout = 10 * time.Second
 )
 
-// connect dials the server WebSocket endpoint and performs the CWP handshake.
+// connectWithFallback tries QUIC first, then falls back to WebSocket.
+// Implements transport alternation per spec: after maxConsecutiveFailures on one
+// transport, switch to the other.
+func (a *Agent) connectWithFallback(ctx context.Context) (protocol.FrameMux, <-chan error, string, error) {
+	// Try QUIC first unless we've exceeded consecutive failure threshold
+	if a.quicFailures < maxConsecutiveFailures {
+		mux, readErr, err := a.connectQUIC(ctx)
+		if err == nil {
+			return mux, readErr, "quic", nil
+		}
+		a.quicFailures++
+		a.logger.Debug("QUIC connection failed, trying WebSocket", "error", err, "quic_failures", a.quicFailures)
+	}
+
+	// Fall back to WebSocket
+	mux, readErr, err := a.connectWS(ctx)
+	if err != nil {
+		a.wsFailures++
+		// If both transports are over threshold, reset QUIC counter to try again
+		if a.wsFailures >= maxConsecutiveFailures {
+			a.quicFailures = 0
+		}
+		return nil, nil, "", fmt.Errorf("all transports failed (quic_failures=%d, ws_failures=%d): %w", a.quicFailures, a.wsFailures, err)
+	}
+	return mux, readErr, "websocket", nil
+}
+
+// connectQUIC dials the server QUIC endpoint and performs the CWP handshake.
+func (a *Agent) connectQUIC(ctx context.Context) (protocol.FrameMux, <-chan error, error) {
+	quicAddr := a.buildQUICAddr()
+
+	dialCtx, dialCancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer dialCancel()
+
+	tlsCfg := &tls.Config{
+		NextProtos: []string{"conduit-cwp-v1"},
+		MinVersion: tls.VersionTLS13,
+	}
+	if a.cfg.DevInsecure {
+		tlsCfg.InsecureSkipVerify = true
+	}
+
+	conn, err := quic.DialAddr(dialCtx, quicAddr, tlsCfg, &quic.Config{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("dialing QUIC %s: %w", quicAddr, err)
+	}
+
+	// Open control stream
+	stream, err := conn.OpenStreamSync(dialCtx)
+	if err != nil {
+		conn.CloseWithError(1, "failed to open stream")
+		return nil, nil, fmt.Errorf("opening QUIC control stream: %w", err)
+	}
+
+	mux := protocol.NewQUICMux(conn, stream, a.logger)
+
+	readErr, err := a.handshake(ctx, mux)
+	if err != nil {
+		mux.Close()
+		return nil, nil, fmt.Errorf("QUIC handshake: %w", err)
+	}
+
+	return mux, readErr, nil
+}
+
+// connectWS dials the server WebSocket endpoint and performs the CWP handshake.
 // Returns an authenticated Mux and the ReadLoop error channel on success.
-func (a *Agent) connect(ctx context.Context) (*protocol.Mux, <-chan error, error) {
+func (a *Agent) connectWS(ctx context.Context) (*protocol.Mux, <-chan error, error) {
 	wsURL := a.buildWSURL()
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, handshakeTimeout)
@@ -94,7 +160,7 @@ func (a *Agent) buildWSURL() string {
 // 1. Agent sends HELLO (agentID, hostname, OS, arch, version)
 // 2. Agent sends AUTH (HMAC-SHA256 signature of HELLO payload + nonce)
 // 3. Server responds with AUTH_OK or AUTH_REJECT
-func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) (<-chan error, error) {
+func (a *Agent) handshake(ctx context.Context, mux protocol.FrameMux) (<-chan error, error) {
 	hsCtx, hsCancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer hsCancel()
 
@@ -177,6 +243,31 @@ func (a *Agent) handshake(ctx context.Context, mux *protocol.Mux) (<-chan error,
 	case <-hsCtx.Done():
 		return nil, fmt.Errorf("handshake timeout")
 	}
+}
+
+// buildQUICAddr constructs the QUIC address from the server URL.
+// Strips the scheme and ensures a port is present.
+func (a *Agent) buildQUICAddr() string {
+	base := strings.TrimRight(a.cfg.ServerURL, "/")
+
+	// Strip scheme
+	for _, prefix := range []string{"https://", "http://", "wss://", "ws://"} {
+		if strings.HasPrefix(base, prefix) {
+			base = base[len(prefix):]
+			break
+		}
+	}
+
+	// Ensure port is present — default to 443 for production, 8443 for dev
+	if !strings.Contains(base, ":") {
+		if a.cfg.DevInsecure {
+			base += ":8443"
+		} else {
+			base += ":443"
+		}
+	}
+
+	return base
 }
 
 // Version returns the agent binary version.

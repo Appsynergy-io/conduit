@@ -30,7 +30,7 @@ const (
 )
 
 // handleFileFrame routes file operation frames to the appropriate handler.
-func (a *Agent) handleFileFrame(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileFrame(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	switch f.Type {
 	case protocol.FrameFileList:
 		a.handleFileList(ctx, mux, f)
@@ -50,7 +50,7 @@ func (a *Agent) handleFileFrame(ctx context.Context, mux *protocol.Mux, f *proto
 }
 
 // handleFileList returns a directory listing.
-func (a *Agent) handleFileList(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileList(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileListRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileListResponse{
@@ -112,7 +112,7 @@ func (a *Agent) handleFileList(ctx context.Context, mux *protocol.Mux, f *protoc
 }
 
 // handleFileRead reads a file and returns its content.
-func (a *Agent) handleFileRead(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileRead(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileReadRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileReadResponse{
@@ -184,7 +184,7 @@ func (a *Agent) handleFileRead(ctx context.Context, mux *protocol.Mux, f *protoc
 }
 
 // handleFileWrite writes content to a file.
-func (a *Agent) handleFileWrite(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileWrite(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileWriteRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileWriteResponse{
@@ -248,7 +248,7 @@ func (a *Agent) handleFileWrite(ctx context.Context, mux *protocol.Mux, f *proto
 }
 
 // handleFileStat returns file metadata.
-func (a *Agent) handleFileStat(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileStat(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileStatRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileStatResponse{
@@ -293,7 +293,7 @@ func (a *Agent) handleFileStat(ctx context.Context, mux *protocol.Mux, f *protoc
 }
 
 // handleFileDelete deletes a file or directory.
-func (a *Agent) handleFileDelete(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileDelete(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileDeleteRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileDeleteResponse{
@@ -328,7 +328,7 @@ func (a *Agent) handleFileDelete(ctx context.Context, mux *protocol.Mux, f *prot
 }
 
 // handleFileRename renames/moves a file.
-func (a *Agent) handleFileRename(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileRename(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileRenameRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileRenameResponse{
@@ -366,7 +366,7 @@ func (a *Agent) handleFileRename(ctx context.Context, mux *protocol.Mux, f *prot
 }
 
 // handleFileMkdir creates a directory.
-func (a *Agent) handleFileMkdir(ctx context.Context, mux *protocol.Mux, f *protocol.Frame) {
+func (a *Agent) handleFileMkdir(ctx context.Context, mux protocol.FrameMux, f *protocol.Frame) {
 	var req protocol.FileMkdirRequest
 	if err := protocol.UnmarshalPayload(f.Payload, &req); err != nil {
 		a.sendFileResponse(ctx, mux, f.Type, f.StreamID, &protocol.FileMkdirResponse{
@@ -392,7 +392,7 @@ func (a *Agent) handleFileMkdir(ctx context.Context, mux *protocol.Mux, f *proto
 }
 
 // sendFileResponse sends a typed file response frame back to the server.
-func (a *Agent) sendFileResponse(ctx context.Context, mux *protocol.Mux, frameType protocol.FrameType, streamID uint32, payload interface{}) {
+func (a *Agent) sendFileResponse(ctx context.Context, mux protocol.FrameMux, frameType protocol.FrameType, streamID uint32, payload interface{}) {
 	f, err := protocol.NewFrame(frameType, streamID, payload)
 	if err != nil {
 		a.logger.Debug("failed to create file response frame", "error", err)
