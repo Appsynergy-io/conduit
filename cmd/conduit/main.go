@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/appsynergy-io/conduit/internal/agent"
 	"github.com/appsynergy-io/conduit/internal/tui"
@@ -49,57 +48,26 @@ func main() {
 	root.AddCommand(shellCmd())
 	root.AddCommand(loginCmd())
 	root.AddCommand(completionCmd())
+	root.AddCommand(userCmd())
+	root.AddCommand(groupCmd())
+	root.AddCommand(auditCmd())
+	root.AddCommand(rebootCmd())
+	root.AddCommand(poweroffCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-// loginClient prompts for server/credentials and returns an authenticated client.
-// If stored credentials exist (from `conduit login`), uses those first.
+// loginClient returns an authenticated client using stored credentials.
+// If no credentials exist, directs the user to run `conduit login` first.
 func loginClient() (*tui.Client, error) {
-	// Try stored credentials first
-	if cred := getCredential("default"); cred != nil {
-		client := tui.NewClient(cred.ServerURL, cred.DevInsecure)
-		client.SetToken(cred.AccessToken)
-		return client, nil
+	cred := getCredential("default")
+	if cred == nil {
+		return nil, fmt.Errorf("not logged in — run 'conduit login' first")
 	}
-
-	serverURL := flagServer
-	if serverURL == "" {
-		fmt.Print("Server URL: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			serverURL = strings.TrimSpace(scanner.Text())
-		}
-		if serverURL == "" {
-			return nil, fmt.Errorf("server URL is required")
-		}
-	}
-	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
-		serverURL = "https://" + serverURL
-	}
-
-	client := tui.NewClient(serverURL, flagDevInsecure)
-
-	fmt.Print("Email: ")
-	scanner := bufio.NewScanner(os.Stdin)
-	var email string
-	if scanner.Scan() {
-		email = strings.TrimSpace(scanner.Text())
-	}
-
-	fmt.Print("Password: ")
-	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
-	if err != nil {
-		return nil, fmt.Errorf("reading password: %w", err)
-	}
-
-	if err := client.Login(email, string(pw)); err != nil {
-		return nil, err
-	}
-
+	client := tui.NewClient(cred.ServerURL, cred.DevInsecure)
+	client.SetToken(cred.AccessToken)
 	return client, nil
 }
 

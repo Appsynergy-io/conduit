@@ -179,7 +179,7 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 |---------|--------|--------------|
 | Browser-based file manager (list, download, upload, delete, rename, mkdir, preview) | ✅ done | CWP, Frontend |
 | File transfer over HTTPS/QUIC — no SFTP dependency | ✅ done | CWP |
-| Resumable file uploads | ❌ spec-only | CWP |
+| Resumable file uploads | ✅ done | CWP |
 
 ### CLI & TUI
 
@@ -190,8 +190,8 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | CLI-only mode on personal devices (zero daemons, zero listeners) | ❌ spec-only | CLI |
 | CLI shell — `conduit shell <agent>` direct shell without TUI | ✅ done | CLI, CWP |
 | CLI exec commands — bulk exec from terminal | ❌ spec-only | CLI, Bulk Exec |
-| CLI group, user, audit management commands | ❌ spec-only | CLI, Auth |
-| CLI lights-out basic (reboot/poweroff via agent) | ❌ spec-only | CLI, CWP |
+| CLI group, user, audit management commands | ✅ done | CLI, Auth |
+| CLI lights-out basic (reboot/poweroff via agent) | ✅ done | CLI, CWP |
 | Shell completions (bash, zsh, fish, PowerShell) | ✅ done | CLI |
 
 ### Bulk Operations
