@@ -27,11 +27,12 @@ type AgentRegistry struct {
 
 // ConnectedAgent represents a live agent connection.
 type ConnectedAgent struct {
-	AgentID  string
-	TenantID string
-	Hostname string
-	Mux      *protocol.Mux
-	cancel   context.CancelFunc
+	AgentID   string
+	TenantID  string
+	Hostname  string
+	Mux       protocol.FrameMux
+	Transport string // "websocket" or "quic"
+	cancel    context.CancelFunc
 }
 
 // NewAgentRegistry creates a new registry for tracking connected agents.
@@ -103,202 +104,19 @@ func (s *Server) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 
 	mux := protocol.NewMux(conn, s.logger)
 
-	// Start read loop in background
 	readErr := make(chan error, 1)
 	go func() {
 		readErr <- mux.ReadLoop(ctx)
 	}()
 
-	// Wait for HELLO frame (5 second timeout)
-	helloCtx, helloCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer helloCancel()
-
-	var hello *protocol.Frame
-	select {
-	case f := <-mux.Global():
-		if f.Type != protocol.FrameHello {
-			s.logger.Warn("expected HELLO frame, got", "type", f.Type.String())
-			sendAuthReject(ctx, mux, "Expected HELLO frame")
-			mux.Close()
-			return
-		}
-		hello = f
-	case <-helloCtx.Done():
-		s.logger.Warn("agent HELLO timeout")
-		mux.Close()
-		return
-	case err := <-readErr:
-		s.logger.Debug("agent disconnected during handshake", "error", err)
-		return
-	}
-
-	// Parse HELLO payload
-	var helloPayload protocol.HelloPayload
-	if err := protocol.UnmarshalPayload(hello.Payload, &helloPayload); err != nil {
-		s.logger.Warn("invalid HELLO payload", "error", err)
-		sendAuthReject(ctx, mux, "Invalid HELLO payload")
-		mux.Close()
-		return
-	}
-
-	if helloPayload.AgentID == "" {
-		sendAuthReject(ctx, mux, "Missing agent ID")
-		mux.Close()
-		return
-	}
-
-	// Wait for AUTH frame (5 second timeout)
-	authCtx, authCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer authCancel()
-
-	var authFrame *protocol.Frame
-	select {
-	case f := <-mux.Global():
-		if f.Type != protocol.FrameAuth {
-			s.logger.Warn("expected AUTH frame, got", "type", f.Type.String())
-			sendAuthReject(ctx, mux, "Expected AUTH frame")
-			mux.Close()
-			return
-		}
-		authFrame = f
-	case <-authCtx.Done():
-		s.logger.Warn("agent AUTH timeout")
-		mux.Close()
-		return
-	case err := <-readErr:
-		s.logger.Debug("agent disconnected during auth", "error", err)
-		return
-	}
-
-	// Parse AUTH payload
-	var authPayload protocol.AuthPayload
-	if err := protocol.UnmarshalPayload(authFrame.Payload, &authPayload); err != nil {
-		s.logger.Warn("invalid AUTH payload", "error", err)
-		sendAuthReject(ctx, mux, "Invalid AUTH payload")
-		mux.Close()
-		return
-	}
-
-	// Look up agent
-	agent, err := s.db.GetAgentByID(ctx, helloPayload.AgentID)
+	agent, hello, err := s.authenticateAgent(ctx, mux, readErr, r.RemoteAddr)
 	if err != nil {
-		s.logger.Error("database error during agent auth", "error", err)
-		sendAuthReject(ctx, mux, "Internal error")
-		mux.Close()
-		return
-	}
-	if agent == nil {
-		s.logger.Warn("unknown agent", "agent_id", helloPayload.AgentID)
-		sendAuthReject(ctx, mux, "Unknown agent")
+		s.logger.Warn("agent WebSocket auth failed", "error", err, "remote_addr", r.RemoteAddr)
 		mux.Close()
 		return
 	}
 
-	// Verify HMAC-SHA256 signature
-	// Agent computes: HMAC-SHA256(key=agentKey, message=helloPayload || nonce)
-	if !verifyAgentAuth(agent.AgentKeyHash, hello.Payload, authPayload.Nonce, authPayload.Signature) {
-		s.logger.Warn("agent auth failed", "agent_id", helloPayload.AgentID)
-		sendAuthReject(ctx, mux, "Authentication failed")
-
-		s.db.InsertAuditLog(ctx, &db.AuditEntry{
-			ID:            uuid.NewString(),
-			TenantID:      agent.TenantID,
-			EventType:     "agent.auth_failed",
-			AgentID:       &agent.ID,
-			AgentHostname: &agent.Hostname,
-			SourceIP:      strPtr(r.RemoteAddr),
-			Outcome:       "failure",
-		})
-
-		mux.Close()
-		return
-	}
-
-	// Auth successful — send AUTH_OK
-	if err := sendAuthOK(ctx, mux); err != nil {
-		s.logger.Error("failed to send AUTH_OK", "error", err)
-		mux.Close()
-		return
-	}
-
-	// Update agent status in DB
-	ip := r.RemoteAddr
-	if err := s.db.UpdateAgentConnection(ctx, agent.ID, "online", "websocket", ip); err != nil {
-		s.logger.Error("failed to update agent connection", "error", err)
-	}
-
-	// Update agent info if provided
-	if helloPayload.Hostname != "" || helloPayload.OS != "" || helloPayload.Arch != "" || helloPayload.Version != "" {
-		s.db.UpdateAgentInfo(ctx, agent.ID, helloPayload.Hostname, helloPayload.OS, helloPayload.Arch, helloPayload.Version)
-	}
-
-	// Register in agent registry
-	connAgent := &ConnectedAgent{
-		AgentID:  agent.ID,
-		TenantID: agent.TenantID,
-		Hostname: agent.Hostname,
-		Mux:      mux,
-		cancel:   cancel,
-	}
-	s.agentRegistry.Register(connAgent)
-
-	s.logger.Info("agent connected",
-		"agent_id", agent.ID,
-		"hostname", helloPayload.Hostname,
-		"transport", "websocket",
-	)
-
-	// Audit
-	s.db.InsertAuditLog(ctx, &db.AuditEntry{
-		ID:            uuid.NewString(),
-		TenantID:      agent.TenantID,
-		EventType:     "agent.connected",
-		AgentID:       &agent.ID,
-		AgentHostname: &helloPayload.Hostname,
-		SourceIP:      strPtr(ip),
-		Details:       strPtr(fmt.Sprintf(`{"transport":"websocket","os":"%s","arch":"%s","version":"%s"}`, helloPayload.OS, helloPayload.Arch, helloPayload.Version)),
-		Outcome:       "success",
-	})
-
-	// Publish connect event
-	s.publishEvent(ctx, agent.TenantID, Event{
-		Channel: "agents",
-		Type:    "agent.connected",
-		Data: map[string]string{
-			"agentId":   agent.ID,
-			"hostname":  helloPayload.Hostname,
-			"transport": "websocket",
-		},
-	})
-
-	// Run the agent connection loop — handles PING/PONG and routes frames
-	s.runAgentLoop(ctx, connAgent, readErr)
-
-	// Agent disconnected — cleanup
-	s.sessionMgr.CleanupAgentSessions(ctx, agent.ID)
-	s.agentRegistry.Unregister(agent.ID)
-	s.db.UpdateAgentStatus(ctx, agent.ID, "offline")
-
-	s.logger.Info("agent disconnected", "agent_id", agent.ID, "hostname", agent.Hostname)
-
-	s.db.InsertAuditLog(ctx, &db.AuditEntry{
-		ID:            uuid.NewString(),
-		TenantID:      agent.TenantID,
-		EventType:     "agent.disconnected",
-		AgentID:       &agent.ID,
-		AgentHostname: &agent.Hostname,
-		SourceIP:      strPtr(ip),
-		Outcome:       "success",
-	})
-
-	s.publishEvent(ctx, agent.TenantID, Event{
-		Channel: "agents",
-		Type:    "agent.disconnected",
-		Data: map[string]string{
-			"agentId":  agent.ID,
-			"hostname": agent.Hostname,
-		},
-	})
+	s.onAgentAuthenticated(ctx, cancel, mux, readErr, agent, hello, "websocket", r.RemoteAddr)
 }
 
 // runAgentLoop processes frames from a connected agent until disconnect.
@@ -415,16 +233,182 @@ func verifyAgentAuth(storedKeyHash string, helloPayload []byte, nonce, signature
 }
 
 // sendAuthOK sends an AUTH_OK frame to the agent.
-func sendAuthOK(ctx context.Context, mux *protocol.Mux) error {
+func sendAuthOK(ctx context.Context, mux protocol.FrameMux) error {
 	f := &protocol.Frame{Type: protocol.FrameAuthOK}
 	return mux.Send(ctx, f)
 }
 
 // sendAuthReject sends an AUTH_REJECT frame with a reason.
-func sendAuthReject(ctx context.Context, mux *protocol.Mux, reason string) {
+func sendAuthReject(ctx context.Context, mux protocol.FrameMux, reason string) {
 	f := &protocol.Frame{
 		Type:    protocol.FrameAuthReject,
 		Payload: []byte(reason),
 	}
 	mux.Send(ctx, f)
+}
+
+// authenticateAgent performs the CWP HELLO+AUTH handshake and returns the
+// authenticated agent. This is transport-agnostic — works over both WebSocket and QUIC.
+func (s *Server) authenticateAgent(ctx context.Context, mux protocol.FrameMux, readErr <-chan error, remoteAddr string) (*db.Agent, *protocol.HelloPayload, error) {
+	// Wait for HELLO frame (5 second timeout)
+	helloCtx, helloCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer helloCancel()
+
+	var hello *protocol.Frame
+	select {
+	case f := <-mux.Global():
+		if f.Type != protocol.FrameHello {
+			sendAuthReject(ctx, mux, "Expected HELLO frame")
+			return nil, nil, fmt.Errorf("expected HELLO, got %s", f.Type.String())
+		}
+		hello = f
+	case <-helloCtx.Done():
+		return nil, nil, fmt.Errorf("HELLO timeout")
+	case err := <-readErr:
+		return nil, nil, fmt.Errorf("disconnected during handshake: %w", err)
+	}
+
+	var helloPayload protocol.HelloPayload
+	if err := protocol.UnmarshalPayload(hello.Payload, &helloPayload); err != nil {
+		sendAuthReject(ctx, mux, "Invalid HELLO payload")
+		return nil, nil, fmt.Errorf("invalid HELLO payload: %w", err)
+	}
+
+	if helloPayload.AgentID == "" {
+		sendAuthReject(ctx, mux, "Missing agent ID")
+		return nil, nil, fmt.Errorf("missing agent ID")
+	}
+
+	// Wait for AUTH frame (5 second timeout)
+	authCtx, authCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer authCancel()
+
+	var authFrame *protocol.Frame
+	select {
+	case f := <-mux.Global():
+		if f.Type != protocol.FrameAuth {
+			sendAuthReject(ctx, mux, "Expected AUTH frame")
+			return nil, nil, fmt.Errorf("expected AUTH, got %s", f.Type.String())
+		}
+		authFrame = f
+	case <-authCtx.Done():
+		return nil, nil, fmt.Errorf("AUTH timeout")
+	case err := <-readErr:
+		return nil, nil, fmt.Errorf("disconnected during auth: %w", err)
+	}
+
+	var authPayload protocol.AuthPayload
+	if err := protocol.UnmarshalPayload(authFrame.Payload, &authPayload); err != nil {
+		sendAuthReject(ctx, mux, "Invalid AUTH payload")
+		return nil, nil, fmt.Errorf("invalid AUTH payload: %w", err)
+	}
+
+	agent, err := s.db.GetAgentByID(ctx, helloPayload.AgentID)
+	if err != nil {
+		sendAuthReject(ctx, mux, "Internal error")
+		return nil, nil, fmt.Errorf("database error: %w", err)
+	}
+	if agent == nil {
+		sendAuthReject(ctx, mux, "Unknown agent")
+		return nil, nil, fmt.Errorf("unknown agent %s", helloPayload.AgentID)
+	}
+
+	if !verifyAgentAuth(agent.AgentKeyHash, hello.Payload, authPayload.Nonce, authPayload.Signature) {
+		sendAuthReject(ctx, mux, "Authentication failed")
+
+		s.db.InsertAuditLog(ctx, &db.AuditEntry{
+			ID:            uuid.NewString(),
+			TenantID:      agent.TenantID,
+			EventType:     "agent.auth_failed",
+			AgentID:       &agent.ID,
+			AgentHostname: &agent.Hostname,
+			SourceIP:      strPtr(remoteAddr),
+			Outcome:       "failure",
+		})
+
+		return nil, nil, fmt.Errorf("auth failed for agent %s", helloPayload.AgentID)
+	}
+
+	if err := sendAuthOK(ctx, mux); err != nil {
+		return nil, nil, fmt.Errorf("sending AUTH_OK: %w", err)
+	}
+
+	return agent, &helloPayload, nil
+}
+
+// onAgentAuthenticated handles post-auth setup: DB update, registry, audit, events.
+// Returns after the agent loop completes (disconnect).
+func (s *Server) onAgentAuthenticated(ctx context.Context, cancel context.CancelFunc, mux protocol.FrameMux, readErr <-chan error, agent *db.Agent, hello *protocol.HelloPayload, transport, remoteAddr string) {
+	if err := s.db.UpdateAgentConnection(ctx, agent.ID, "online", transport, remoteAddr); err != nil {
+		s.logger.Error("failed to update agent connection", "error", err)
+	}
+
+	if hello.Hostname != "" || hello.OS != "" || hello.Arch != "" || hello.Version != "" {
+		s.db.UpdateAgentInfo(ctx, agent.ID, hello.Hostname, hello.OS, hello.Arch, hello.Version)
+	}
+
+	connAgent := &ConnectedAgent{
+		AgentID:   agent.ID,
+		TenantID:  agent.TenantID,
+		Hostname:  agent.Hostname,
+		Mux:       mux,
+		Transport: transport,
+		cancel:    cancel,
+	}
+	s.agentRegistry.Register(connAgent)
+
+	s.logger.Info("agent connected",
+		"agent_id", agent.ID,
+		"hostname", hello.Hostname,
+		"transport", transport,
+	)
+
+	s.db.InsertAuditLog(ctx, &db.AuditEntry{
+		ID:            uuid.NewString(),
+		TenantID:      agent.TenantID,
+		EventType:     "agent.connected",
+		AgentID:       &agent.ID,
+		AgentHostname: &hello.Hostname,
+		SourceIP:      strPtr(remoteAddr),
+		Details:       strPtr(fmt.Sprintf(`{"transport":"%s","os":"%s","arch":"%s","version":"%s"}`, transport, hello.OS, hello.Arch, hello.Version)),
+		Outcome:       "success",
+	})
+
+	s.publishEvent(ctx, agent.TenantID, Event{
+		Channel: "agents",
+		Type:    "agent.connected",
+		Data: map[string]string{
+			"agentId":   agent.ID,
+			"hostname":  hello.Hostname,
+			"transport": transport,
+		},
+	})
+
+	s.runAgentLoop(ctx, connAgent, readErr)
+
+	// Agent disconnected — cleanup
+	s.sessionMgr.CleanupAgentSessions(ctx, agent.ID)
+	s.agentRegistry.Unregister(agent.ID)
+	s.db.UpdateAgentStatus(ctx, agent.ID, "offline")
+
+	s.logger.Info("agent disconnected", "agent_id", agent.ID, "hostname", agent.Hostname)
+
+	s.db.InsertAuditLog(ctx, &db.AuditEntry{
+		ID:            uuid.NewString(),
+		TenantID:      agent.TenantID,
+		EventType:     "agent.disconnected",
+		AgentID:       &agent.ID,
+		AgentHostname: &agent.Hostname,
+		SourceIP:      strPtr(remoteAddr),
+		Outcome:       "success",
+	})
+
+	s.publishEvent(ctx, agent.TenantID, Event{
+		Channel: "agents",
+		Type:    "agent.disconnected",
+		Data: map[string]string{
+			"agentId":  agent.ID,
+			"hostname": agent.Hostname,
+		},
+	})
 }

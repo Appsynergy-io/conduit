@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -86,21 +88,33 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	// TLS config
-	var tlsResult *shared.DevTLSResult
+	var tlsCfg *tls.Config
+	var acmeHTTPHandler http.Handler
+
 	if dev {
-		tlsResult, err = shared.GenerateDevTLS()
+		tlsResult, err := shared.GenerateDevTLS()
 		if err != nil {
 			return fmt.Errorf("generating dev TLS: %w", err)
 		}
 		logger.InfoContext(ctx, "dev TLS certificate generated",
 			"fingerprint", tlsResult.Fingerprint,
 		)
+		tlsCfg = tlsResult.TLSConfig
+	} else if cfg.Server.Domain != "" {
+		// Production with domain: use ACME for Let's Encrypt certificates.
+		acmeMgr, acmeErr := shared.NewACMEManager(cfg.Server.Domain, cfg.Server.CertDir, logger)
+		if acmeErr != nil {
+			return fmt.Errorf("creating ACME manager: %w", acmeErr)
+		}
+		tlsCfg = shared.ACMETLSConfig(acmeMgr)
+		acmeHTTPHandler = acmeMgr.HTTPHandler(nil)
+		logger.InfoContext(ctx, "ACME TLS enabled", "domain", cfg.Server.Domain, "cert_dir", cfg.Server.CertDir)
+	} else {
+		// Production without domain: base TLS config (manual cert management).
+		tlsCfg = shared.ProductionTLSConfig()
 	}
 
-	var tlsCfg = shared.ProductionTLSConfig()
-	if tlsResult != nil {
-		tlsCfg = tlsResult.TLSConfig
-	}
+	tlsCfg.VerifyConnection = shared.PQCVerifyConnection(logger)
 
 	// Create and start server
 	srv := server.New(cfg, database, jwtMgr, tlsCfg, logger, conduit.FrontendFS)
@@ -113,6 +127,24 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	if err := srv.Start(ctx); err != nil {
 		return fmt.Errorf("starting server: %w", err)
+	}
+
+	// Start ACME HTTP-01 challenge listener on port 80 (production only).
+	// Redirects non-challenge traffic to HTTPS.
+	var acmeHTTPSrv *http.Server
+	if acmeHTTPHandler != nil {
+		acmeHTTPSrv = &http.Server{
+			Addr:              ":80",
+			Handler:           acmeHTTPHandler,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+		go func() {
+			if listenErr := acmeHTTPSrv.ListenAndServe(); listenErr != nil && listenErr != http.ErrServerClosed {
+				logger.ErrorContext(ctx, "ACME HTTP listener error", "error", listenErr)
+			}
+		}()
+		logger.InfoContext(ctx, "ACME HTTP-01 challenge listener started", "addr", ":80")
 	}
 
 	if token != "" {
@@ -130,6 +162,11 @@ func run(cmd *cobra.Command, _ []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
+	if acmeHTTPSrv != nil {
+		if err := acmeHTTPSrv.Shutdown(shutdownCtx); err != nil {
+			logger.ErrorContext(shutdownCtx, "ACME HTTP shutdown error", "error", err)
+		}
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.ErrorContext(shutdownCtx, "shutdown error", "error", err)
 		return err
