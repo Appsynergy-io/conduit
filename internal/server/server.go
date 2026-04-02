@@ -43,6 +43,7 @@ type Server struct {
 	setupLimiter     *middleware.RateLimiter
 	execJobs         map[string]context.CancelFunc
 	execJobsMu       sync.Mutex
+	uploads          *uploadStore
 	agentMetrics     sync.Map // agentID → *protocol.AgentInfoPayload
 	quicTransport     *quic.Transport
 	quicEarlyListener *quic.EarlyListener
@@ -77,6 +78,7 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 			Burst:    10,
 		}),
 		execJobs: make(map[string]context.CancelFunc),
+		uploads:  newUploadStore(),
 	}
 	s.initWebAuthn()
 	s.router = s.buildRouter()
@@ -168,6 +170,13 @@ func (s *Server) buildRouter() chi.Router {
 	r.Get("/api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws", s.handleShellAttach)
 	r.Get("/agent/v1/connect", s.handleAgentConnect)
 
+	// Binary upload endpoint (outside RequireJSON — sends octet-stream)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Auth(s.jwtMgr, s))
+		r.Use(middleware.RequireService("remote-access"))
+		r.Patch("/api/v1/agents/{agentId}/uploads/{uploadId}", s.handleUploadChunk)
+	})
+
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.RequireJSON)
@@ -189,8 +198,10 @@ func (s *Server) buildRouter() chi.Router {
 			r.Post("/auth/webauthn/login/finish", s.handleWebAuthnLoginFinish)
 			r.Post("/auth/recovery/verify", s.handleVerifyRecoveryCode)
 			r.Post("/auth/device/begin", s.handleBeginDeviceFlow)
-			r.Post("/auth/device/poll", s.handlePollDeviceFlow)
 		})
+
+		// Device flow poll — separate from auth rate limiter because CLI polls every 5s
+		r.Post("/auth/device/poll", s.handlePollDeviceFlow)
 
 		// Agent registration (token-based auth, no JWT)
 		r.Post("/agents/register", s.handleAgentRegister)
@@ -266,10 +277,19 @@ func (s *Server) buildRouter() chi.Router {
 				r.Post("/agents/{agentId}/files/mkdir", s.handleMkdir)
 				r.Get("/agents/{agentId}/files/preview", s.handlePreviewFile)
 
+				// Resumable uploads (init, status, complete, cancel use JSON)
+				r.Post("/agents/{agentId}/uploads", s.handleInitUpload)
+				r.Get("/agents/{agentId}/uploads/{uploadId}", s.handleUploadStatus)
+				r.Post("/agents/{agentId}/uploads/{uploadId}/complete", s.handleCompleteUpload)
+				r.Delete("/agents/{agentId}/uploads/{uploadId}", s.handleCancelUpload)
+
 				// Join tokens
 				r.Get("/agents/tokens", s.handleListJoinTokens)
 				r.Post("/agents/tokens", s.handleCreateJoinToken)
 				r.Delete("/agents/tokens/{tokenId}", s.handleRevokeJoinToken)
+
+				// Power management (lights-out)
+				r.Post("/agents/{agentId}/power", s.handlePowerAction)
 
 				// Bulk exec
 				r.Post("/exec", s.handleBulkExec)

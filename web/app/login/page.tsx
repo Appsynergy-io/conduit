@@ -1,8 +1,8 @@
 "use client"
 
-import { AlertCircle, Fingerprint } from "lucide-react"
-import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { AlertCircle, CheckCircle2, Fingerprint, Monitor } from "lucide-react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { Suspense, useCallback, useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
 import { z } from "zod"
@@ -44,17 +44,59 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter()
-  const { login } = useAuth()
+  const searchParams = useSearchParams()
+  const { login, isAuthenticated } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [webauthnAvailable, setWebauthnAvailable] = useState(false)
+  const [deviceCode, setDeviceCode] = useState<string | null>(null)
+  const [deviceAuthorizing, setDeviceAuthorizing] = useState(false)
+  const [deviceAuthorized, setDeviceAuthorized] = useState(false)
 
   const form = useForm<LoginFormValues>({
     resolver: standardSchemaResolver(loginSchema),
     defaultValues: { email: "", password: "" },
   })
+
+  // Check for device flow param
+  useEffect(() => {
+    const code = searchParams.get("device")
+    if (code) {
+      setDeviceCode(code)
+    }
+  }, [searchParams])
+
+  // If already authenticated and there's a device code, show authorize prompt
+  useEffect(() => {
+    if (isAuthenticated && deviceCode && !deviceAuthorized) {
+      // Already logged in, just need to authorize the device
+    }
+  }, [isAuthenticated, deviceCode, deviceAuthorized])
+
+  const authorizeDevice = useCallback(async () => {
+    if (!deviceCode) return
+    setDeviceAuthorizing(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/v1/auth/device/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userCode: deviceCode }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        setError(body?.detail ?? "Failed to authorize device.")
+        return
+      }
+      setDeviceAuthorized(true)
+    } catch {
+      setError("Failed to authorize device.")
+    } finally {
+      setDeviceAuthorizing(false)
+    }
+  }, [deviceCode])
 
   useEffect(() => {
     setWebauthnAvailable(
@@ -139,7 +181,9 @@ export default function LoginPage() {
 
       const data = await finishRes.json()
       login(data.user.id, data.user.tenantId, data.user.roles ?? [])
-      router.push("/dashboard")
+      if (!deviceCode) {
+        router.push("/dashboard")
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "NotAllowedError") {
         setError("Passkey authentication was cancelled or timed out.")
@@ -169,10 +213,75 @@ export default function LoginPage() {
 
       const data = await res.json()
       login(data.user.id, data.user.tenantId, data.user.roles ?? [])
-      router.push("/dashboard")
+      if (!deviceCode) {
+        router.push("/dashboard")
+      }
     } catch {
       setError("Unable to reach the server. Check your connection.")
     }
+  }
+
+  // Device authorization UI (shown after login when device code is present)
+  if (isAuthenticated && deviceCode) {
+    if (deviceAuthorized) {
+      return (
+        <div className="flex min-h-screen items-center justify-center px-4">
+          <Card className="w-full max-w-sm">
+            <CardHeader className="text-center">
+              <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-900">
+                <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
+              </div>
+              <CardTitle className="text-xl font-bold">Device Authorized</CardTitle>
+              <CardDescription>
+                You can close this window. The CLI is now authenticated.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+              <Monitor className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <CardTitle className="text-xl font-bold">Authorize CLI</CardTitle>
+            <CardDescription>
+              A CLI session is requesting access to your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            <div className="rounded-lg border bg-muted/50 p-4 text-center">
+              <p className="text-xs text-muted-foreground">Confirm this code matches your CLI</p>
+              <p className="mt-1 font-mono text-2xl font-bold tracking-widest">{deviceCode}</p>
+            </div>
+            <Button
+              className="w-full"
+              onClick={authorizeDevice}
+              disabled={deviceAuthorizing}
+            >
+              {deviceAuthorizing ? "Authorizing..." : "Authorize this device"}
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => { setDeviceCode(null); router.push("/dashboard") }}
+            >
+              Cancel
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
@@ -266,5 +375,13 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginContent />
+    </Suspense>
   )
 }
