@@ -110,10 +110,10 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| QUIC + WebSocket dual listeners (UDP 443 + TCP 443) | ❌ spec-only | — |
-| HTTP/3 serving for browsers + HTTP/2 fallback | ❌ spec-only | — |
-| ACME TLS auto-provisioning (Let's Encrypt) | ❌ spec-only | — |
-| X25519MLKEM768 hybrid PQC TLS on all connections | ❌ spec-only | — |
+| QUIC + WebSocket dual listeners (UDP 443 + TCP 443) | ✅ done | — |
+| HTTP/3 serving for browsers + HTTP/2 fallback | ✅ done | — |
+| ACME TLS auto-provisioning (Let's Encrypt) | ✅ done | — |
+| X25519MLKEM768 hybrid PQC TLS on all connections | ✅ done | — |
 | SQLite database (pure Go, `modernc.org/sqlite`) with AES-256-GCM on sensitive fields | ✅ done | — |
 | Embedded static frontend via `embed.FS` | ✅ done | Frontend |
 | First-run setup wizard (localhost:8080 → ACME → HTTPS → forced passkey) | ✅ done | Auth, DB |
@@ -142,7 +142,7 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 
 | Feature | Status | Dependencies |
 |---------|--------|--------------|
-| Agent outbound QUIC connection (primary) | ❌ spec-only | CWP |
+| Agent outbound QUIC connection (primary) | ✅ done | CWP |
 | Agent WebSocket transport with reconnection (exponential backoff + jitter) | ✅ done | CWP |
 | CWP wire protocol — identical binary framing over QUIC and WebSocket | ✅ done | — |
 | Agent registration flow (single-use + persistent join tokens) | ✅ done | Auth, DB |

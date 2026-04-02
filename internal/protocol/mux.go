@@ -10,6 +10,32 @@ import (
 	"github.com/coder/websocket"
 )
 
+// FrameMux is the interface for multiplexed CWP frame transport.
+// Both WebSocket (Mux) and QUIC (QUICMux) implement this.
+type FrameMux interface {
+	// Global returns the channel for frames not routed to a specific stream.
+	Global() <-chan *Frame
+	// Done returns a channel that is closed when the mux stops.
+	Done() <-chan struct{}
+	// NextStreamID allocates a new unique stream ID.
+	NextStreamID() uint32
+	// OpenStream registers a handler for the given stream ID.
+	OpenStream(id uint32) <-chan *Frame
+	// CloseStream unregisters a stream handler.
+	CloseStream(id uint32)
+	// Send writes a frame to the connection. Safe for concurrent use.
+	Send(ctx context.Context, f *Frame) error
+	// ReadLoop reads frames and dispatches them. Blocks until error or close.
+	ReadLoop(ctx context.Context) error
+	// Close cleanly shuts down the multiplexer and underlying connection.
+	Close() error
+	// StreamCount returns the number of open streams.
+	StreamCount() int
+}
+
+// Verify Mux implements FrameMux at compile time.
+var _ FrameMux = (*Mux)(nil)
+
 // Mux multiplexes CWP frames over a single WebSocket connection.
 // Each logical operation (shell session, file transfer, exec job) gets its own
 // StreamID. The Mux routes incoming frames to registered stream handlers and

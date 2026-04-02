@@ -40,7 +40,7 @@ func (s *shellSession) Close() {
 }
 
 // startShell launches a new PTY shell session and wires it to the CWP stream.
-func (a *Agent) startShell(ctx context.Context, mux *protocol.Mux, streamID uint32, payload *protocol.ShellStartPayload) {
+func (a *Agent) startShell(ctx context.Context, mux protocol.FrameMux, streamID uint32, payload *protocol.ShellStartPayload) {
 	shell := defaultShell()
 	if payload.Shell != "" {
 		shell = payload.Shell
@@ -189,7 +189,7 @@ func (a *Agent) resizeShell(streamID uint32, payload *protocol.ShellResizePayloa
 }
 
 // sendShellExit sends a SHELL_EXIT frame to the server.
-func (a *Agent) sendShellExit(ctx context.Context, mux *protocol.Mux, streamID uint32, sessionID string, exitCode int) {
+func (a *Agent) sendShellExit(ctx context.Context, mux protocol.FrameMux, streamID uint32, sessionID string, exitCode int) {
 	payload := protocol.ShellExitPayload{
 		SessionID: sessionID,
 		ExitCode:  exitCode,

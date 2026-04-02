@@ -20,12 +20,12 @@ const (
 
 // startExec handles EXEC_START frames from the server.
 // It runs the command, streams output via EXEC_DATA, and sends EXEC_EXIT on completion.
-func (a *Agent) startExec(ctx context.Context, mux *protocol.Mux, streamID uint32, payload *protocol.ExecStartPayload) {
+func (a *Agent) startExec(ctx context.Context, mux protocol.FrameMux, streamID uint32, payload *protocol.ExecStartPayload) {
 	go a.runExec(ctx, mux, streamID, payload)
 }
 
 // runExec executes a command and sends results back to the server.
-func (a *Agent) runExec(ctx context.Context, mux *protocol.Mux, streamID uint32, payload *protocol.ExecStartPayload) {
+func (a *Agent) runExec(ctx context.Context, mux protocol.FrameMux, streamID uint32, payload *protocol.ExecStartPayload) {
 	timeout := defaultExecTimeout
 	if payload.Timeout > 0 {
 		timeout = time.Duration(payload.Timeout) * time.Second
