@@ -183,25 +183,38 @@ BINARY="${INSTALL_DIR}/conduit"
 
 echo "Downloading conduit from ${DOWNLOAD_URL}..."
 
+# Use a temp file first, then move into place (may need sudo)
+TMP_BINARY="$(mktemp)"
+trap 'rm -f "$TMP_BINARY"' EXIT
+
 CURL_OPTS="-sSL -f"
 if [ -n "$DEV_INSECURE" ]; then
   CURL_OPTS="$CURL_OPTS -k"
 fi
 
 if command -v curl >/dev/null 2>&1; then
-  curl $CURL_OPTS -o "$BINARY" "$DOWNLOAD_URL"
+  curl $CURL_OPTS -o "$TMP_BINARY" "$DOWNLOAD_URL"
 elif command -v wget >/dev/null 2>&1; then
   WGET_OPTS="-q -O"
   if [ -n "$DEV_INSECURE" ]; then
     WGET_OPTS="$WGET_OPTS --no-check-certificate"
   fi
-  wget $WGET_OPTS "$BINARY" "$DOWNLOAD_URL"
+  wget $WGET_OPTS "$TMP_BINARY" "$DOWNLOAD_URL"
 else
   echo "Error: curl or wget is required"
   exit 1
 fi
 
-chmod +x "$BINARY"
+chmod +x "$TMP_BINARY"
+
+# Install to target directory, using sudo if needed
+if [ -w "$INSTALL_DIR" ]; then
+  mv "$TMP_BINARY" "$BINARY"
+else
+  echo "Need elevated permissions to install to ${INSTALL_DIR}"
+  sudo mv "$TMP_BINARY" "$BINARY"
+  sudo chmod +x "$BINARY"
+fi
 echo "Installed conduit to ${BINARY}"
 
 # --- Join server (only if token provided) ---

@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertCircle, CheckCircle2, Fingerprint, Monitor } from "lucide-react"
+import { AlertCircle, CheckCircle2, Fingerprint, Monitor, User } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useCallback, useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
@@ -48,17 +48,20 @@ function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { login, isAuthenticated } = useAuth()
+  const savedEmail = typeof window !== "undefined" ? localStorage.getItem("conduit_email") ?? "" : ""
+
   const [error, setError] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [webauthnAvailable, setWebauthnAvailable] = useState(false)
   const [passwordAuth, setPasswordAuth] = useState(false)
+  const [showEmailInput, setShowEmailInput] = useState(!savedEmail)
   const [deviceCode, setDeviceCode] = useState<string | null>(null)
   const [deviceAuthorizing, setDeviceAuthorizing] = useState(false)
   const [deviceAuthorized, setDeviceAuthorized] = useState(false)
 
   const form = useForm<LoginFormValues>({
     resolver: standardSchemaResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { email: savedEmail, password: "" },
   })
 
   // Check for device flow param
@@ -185,6 +188,7 @@ function LoginContent() {
       }
 
       const data = await finishRes.json()
+      localStorage.setItem("conduit_email", form.getValues("email"))
       login(data.user.id, data.user.tenantId, data.user.roles ?? [])
       if (!deviceCode) {
         router.push("/dashboard")
@@ -193,7 +197,7 @@ function LoginContent() {
       if (err instanceof DOMException && err.name === "NotAllowedError") {
         setError("Passkey authentication was cancelled or timed out.")
       } else {
-        setError("Passkey authentication failed. Try signing in with a password.")
+        setError("Passkey authentication failed.")
       }
     } finally {
       setPasskeyLoading(false)
@@ -217,6 +221,7 @@ function LoginContent() {
       }
 
       const data = await res.json()
+      localStorage.setItem("conduit_email", values.email)
       login(data.user.id, data.user.tenantId, data.user.roles ?? [])
       if (!deviceCode) {
         router.push("/dashboard")
@@ -289,6 +294,65 @@ function LoginContent() {
     )
   }
 
+  // Returning user — show welcome back with one-click passkey
+  if (savedEmail && !showEmailInput) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl font-bold tracking-tight">Welcome back</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-5">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              <div className="flex items-center justify-center">
+                <div className="flex items-center gap-3 rounded-full border bg-muted/50 px-4 py-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+                    <User className="h-4 w-4 text-primary" />
+                  </div>
+                  <span className="text-sm font-medium">{savedEmail}</span>
+                </div>
+              </div>
+
+              {webauthnAvailable && (
+                <Button
+                  type="button"
+                  className="w-full"
+                  size="lg"
+                  disabled={passkeyLoading}
+                  onClick={handlePasskeyLogin}
+                >
+                  <Fingerprint className="mr-2 h-4 w-4" />
+                  {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
+                </Button>
+              )}
+
+              <button
+                type="button"
+                className="block w-full text-center text-sm text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  localStorage.removeItem("conduit_email")
+                  form.setValue("email", "")
+                  setShowEmailInput(true)
+                  setError(null)
+                }}
+              >
+                Not you? Use a different account
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Fresh login — email input + passkey/password
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-sm">

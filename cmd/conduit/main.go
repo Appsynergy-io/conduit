@@ -52,6 +52,7 @@ func main() {
 	root.AddCommand(auditCmd())
 	root.AddCommand(rebootCmd())
 	root.AddCommand(poweroffCmd())
+	root.AddCommand(updateCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
