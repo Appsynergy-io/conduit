@@ -41,7 +41,7 @@ func (u *WebAuthnUser) WebAuthnCredentials() []webauthn.Credential {
 }
 
 // PasskeyToCredential converts a Conduit DB passkey record to a webauthn.Credential.
-func PasskeyToCredential(credentialID, publicKey []byte, signCount uint32, authenticatorType string) webauthn.Credential {
+func PasskeyToCredential(credentialID, publicKey []byte, signCount uint32, authenticatorType string, backupEligible, backupState bool) webauthn.Credential {
 	var attachment protocol.AuthenticatorAttachment
 	switch authenticatorType {
 	case "platform":
@@ -54,6 +54,10 @@ func PasskeyToCredential(credentialID, publicKey []byte, signCount uint32, authe
 		ID:              credentialID,
 		PublicKey:       publicKey,
 		AttestationType: "",
+		Flags: webauthn.CredentialFlags{
+			BackupEligible: backupEligible,
+			BackupState:    backupState,
+		},
 		Authenticator: webauthn.Authenticator{
 			SignCount:  signCount,
 			Attachment: attachment,

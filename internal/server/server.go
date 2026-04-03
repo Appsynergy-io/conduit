@@ -194,6 +194,7 @@ func (s *Server) buildRouter() chi.Router {
 		// Rate limited: max 100 requests/hour per IP (OWASP A07, API2 — anti-brute-force)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RateLimit(s.authLimiter))
+			r.Get("/auth/config", s.handleAuthConfig)
 			r.Post("/auth/password/login", s.handlePasswordLogin)
 			r.Post("/auth/webauthn/login/begin", s.handleWebAuthnLoginBegin)
 			r.Post("/auth/webauthn/login/finish", s.handleWebAuthnLoginFinish)

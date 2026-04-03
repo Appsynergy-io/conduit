@@ -13,6 +13,17 @@ import (
 	"github.com/appsynergy-io/conduit/internal/middleware"
 )
 
+// handleAuthConfig returns public auth configuration for the login UI.
+// GET /api/v1/auth/config
+// Exposes only what the client needs to render the correct login form.
+// No internal details leaked (NIST SI-11, OWASP A05).
+func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"passwordAuth": s.cfg.Server.Mode == "dev",
+	})
+}
+
 // loginRequest is the request body for POST /api/v1/auth/password/login.
 type loginRequest struct {
 	Email    string `json:"email"`
