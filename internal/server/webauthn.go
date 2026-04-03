@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-webauthn/webauthn/protocol"
@@ -347,17 +346,10 @@ func (s *Server) handleWebAuthnLoginFinish(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Create session
-	sessionID := uuid.NewString()
-	session := &db.Session{
-		ID:        sessionID,
-		TenantID:  user.TenantID,
-		UserID:    user.ID,
-		Type:      "web",
-		SourceIP:  strPtr(r.RemoteAddr),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
-	}
-	if err := s.db.CreateSession(ctx, session); err != nil {
+	// Reuse existing web session from same browser, or create a new one
+	ua := r.UserAgent()
+	sessionID, err := s.findOrCreateSession(ctx, user.ID, user.TenantID, "web", r.RemoteAddr, ua)
+	if err != nil {
 		apierror.Internal(w, r, err)
 		return
 	}

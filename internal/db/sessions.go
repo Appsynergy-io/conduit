@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // Session represents a row from the sessions table.
@@ -73,8 +74,8 @@ func (d *DB) GetSessionByID(ctx context.Context, id string) (*Session, error) {
 func (d *DB) ListSessionsByUser(ctx context.Context, userID string) ([]Session, error) {
 	rows, err := d.conn.QueryContext(ctx,
 		`SELECT id, tenant_id, user_id, type, source_ip, user_agent, refresh_token_hash, expires_at, created_at, last_active_at
-		 FROM sessions WHERE user_id = ?
-		 ORDER BY last_active_at DESC`, userID,
+		 FROM sessions WHERE user_id = ? AND expires_at > ?
+		 ORDER BY last_active_at DESC`, userID, Now(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions by user: %w", err)
@@ -162,8 +163,8 @@ type SessionListParams struct {
 func (d *DB) ListSessionsPaginated(ctx context.Context, p SessionListParams) ([]Session, error) {
 	query := `SELECT id, tenant_id, user_id, type, source_ip, user_agent,
 	           refresh_token_hash, expires_at, created_at, last_active_at
-	           FROM sessions WHERE tenant_id = ?`
-	args := []interface{}{p.TenantID}
+	           FROM sessions WHERE tenant_id = ? AND expires_at > ?`
+	args := []interface{}{p.TenantID, Now()}
 
 	if p.Type != "" && p.Type != "all" {
 		query += ` AND type = ?`
@@ -195,6 +196,49 @@ func (d *DB) ListSessionsPaginated(ctx context.Context, p SessionListParams) ([]
 		sessions = append(sessions, s)
 	}
 	return sessions, rows.Err()
+}
+
+// FindActiveSession finds a non-expired session matching user, type, user-agent, and source IP.
+// Matching on IP ensures a login from a different network always creates a new visible session
+// so the user can detect unauthorized access from unfamiliar IPs (NIST AC-3, AU-2).
+func (d *DB) FindActiveSession(ctx context.Context, userID, sessType, userAgent, sourceIP string) (*Session, error) {
+	var s Session
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT id, tenant_id, user_id, type, source_ip, user_agent, refresh_token_hash, expires_at, created_at, last_active_at
+		 FROM sessions
+		 WHERE user_id = ? AND type = ? AND user_agent = ? AND source_ip = ? AND expires_at > ?
+		 ORDER BY last_active_at DESC
+		 LIMIT 1`,
+		userID, sessType, userAgent, sourceIP, Now(),
+	).Scan(
+		&s.ID, &s.TenantID, &s.UserID, &s.Type, &s.SourceIP, &s.UserAgent,
+		&s.RefreshTokenHash, &s.ExpiresAt, &s.CreatedAt, &s.LastActiveAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding active session: %w", err)
+	}
+	return &s, nil
+}
+
+// RefreshSession extends a session's expiry by 24 hours and updates its activity timestamp.
+// Source IP is NOT updated — each IP stays pinned to its session for audit visibility.
+func (d *DB) RefreshSession(ctx context.Context, id string) error {
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE sessions SET expires_at = ?, last_active_at = ? WHERE id = ?`,
+		Now24h(), Now(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("refreshing session: %w", err)
+	}
+	return nil
+}
+
+// Now24h returns 24 hours from now in RFC3339 format.
+func Now24h() string {
+	return time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
 }
 
 // DeleteExpiredSessions removes all sessions past their expiry and returns the count removed.
