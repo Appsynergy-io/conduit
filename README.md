@@ -137,6 +137,7 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | CLI credential storage (encrypted, per-profile) | ✅ done | CLI |
 | All authenticated sessions (web, CLI, CI) visible and revocable | ✅ done | Auth, DB |
 | CI token support (`CONDUIT_TOKEN` env var, scoped, revocable) | ✅ done | Auth, DB |
+| Dashboard settings page (profile, passkeys, recovery, sessions, CI tokens, server info) | ✅ done | Frontend, Auth, DB |
 
 ### Agent & Connections
 
