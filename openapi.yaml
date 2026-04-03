@@ -1507,6 +1507,8 @@ paths:
                       - agents:read
                       - agents:write
                       - shell:execute
+                      - shell:watch
+                      - shell:control
                       - files:read
                       - files:write
                       - exec:run
@@ -3587,18 +3589,32 @@ paths:
         terminal I/O. Works for both new sessions (status: active) and
         resuming detached sessions.
 
+        **Multi-client model:** A session supports one controller (read-write)
+        and unlimited watchers (read-only). The `mode` parameter selects the
+        connection role. When connecting with `mode=control` and another
+        controller is already attached, the existing controller is demoted to
+        watcher and notified via a `control_transferred` message.
+
+        **Authorization (NIST AC-3):**
+        - Session owner: always allowed (any mode)
+        - org_admin+: allowed for any session (any mode)
+        - org_member: own sessions only
+        - CI token: requires `shell:execute` scope (control own sessions),
+          `shell:watch` (watch any session), or `shell:control` (take control
+          of any session)
+
         **Attach flow:**
-        1. Client connects to this endpoint with a valid JWT
-        2. Server verifies session ownership (NIST AC-3)
+        1. Client connects with a valid JWT and optional `mode` parameter
+        2. Server verifies authorization (ownership or role-based access)
         3. If session is detached: replays buffered output, transitions to active
-        4. Terminal I/O flows bidirectionally
+        4. Terminal I/O flows based on role (controller: bidirectional, watcher: output only)
 
         **Detach flow:**
-        When the WebSocket closes (browser navigates away, network drop, explicit
-        detach), the session transitions to `detached` status. The PTY remains
-        alive on the agent and output is buffered in a ring buffer on the server.
-        The session can be resumed from any platform by connecting to this
-        endpoint again.
+        When the last connected client's WebSocket closes (browser navigates away,
+        network drop, explicit detach), the session transitions to `detached`
+        status. The PTY remains alive on the agent and output is buffered in a
+        ring buffer on the server. The session can be resumed from any platform
+        by connecting to this endpoint again.
 
         **Pinned sessions:** Sessions with `pinned: true` never idle-timeout
         while detached. Non-pinned sessions close after `idleTimeout` seconds
@@ -3606,20 +3622,38 @@ paths:
 
         **CWP frames:** SHELL_DATA (I/O), SHELL_RESIZE (terminal resize).
 
-        **Inbound messages:**
+        **Inbound messages (controller only):**
         - Binary data — raw terminal input (keystrokes)
         - `{"type": "resize", "cols": 120, "rows": 40}` — terminal resize
+        - `{"type": "take_control"}` — watcher requests control promotion
 
-        **Outbound messages:**
+        **Outbound messages (all clients):**
         - Binary data — raw terminal output
+        - `{"type": "session", "sessionId": "...", "role": "controller"|"watcher"}` — initial session info
         - `{"type": "exit", "code": 0}` — session ended (PTY exited)
         - `{"type": "detached"}` — session detached (informational, sent before close)
+        - `{"type": "control_transferred", "to": "<userId>"}` — sent to demoted controller
+        - `{"type": "control_granted"}` — sent to new controller
+        - `{"type": "controller_changed", "userId": "..."}` — broadcast to all watchers
+        - `{"type": "watcher_joined", "userId": "...", "watcherCount": N}` — broadcast to all
+        - `{"type": "watcher_left", "userId": "...", "watcherCount": N}` — broadcast to all
       tags: [Shell]
-      x-nist-controls: [AU-2, AU-3, AC-3, AC-12]
-      x-owasp: [A01, A03, API1]
+      x-nist-controls: [AU-2, AU-3, AC-3, AC-6, AC-12]
+      x-owasp: [A01, A03, API1, API5]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - $ref: "#/components/parameters/PathSessionId"
+        - name: mode
+          in: query
+          description: |
+            Connection mode. `control` (default) attaches with full I/O —
+            if another controller exists, they are demoted to watcher.
+            `watch` attaches as a read-only observer receiving terminal
+            output but unable to send input.
+          schema:
+            type: string
+            enum: [control, watch]
+            default: control
       responses:
         "101":
           description: WebSocket connection established, session attached
@@ -3629,8 +3663,150 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /agents/{agentId}/shell/sessions/{sessionId}/watch:
+    get:
+      operationId: watchShellSession
+      summary: Watch a shell session (read-only WebSocket)
+      description: |
+        Upgrades to WebSocket and connects as a read-only watcher to a live
+        shell session. Receives all terminal output but cannot send input.
+        This is a convenience endpoint equivalent to connecting via the
+        `/ws` endpoint with `mode=watch`.
+
+        The session ring buffer is replayed on connect so the watcher sees
+        recent output history, then live output streams in real time.
+
+        **Authorization (NIST AC-3, AC-6):**
+        - Session owner: always allowed
+        - org_admin+: allowed for any session
+        - org_member: own sessions only
+        - CI token: requires `shell:watch` or `shell:control` scope
+
+        **Outbound messages:** Same as the `/ws` endpoint — binary terminal
+        output plus JSON control messages (`session`, `control_transferred`,
+        `controller_changed`, `watcher_joined`, `watcher_left`, `exit`).
+
+        **Inbound messages:** Only `{"type": "take_control"}` is accepted.
+        Binary input and resize commands are silently discarded for watchers.
+
+        **NIST AU-2:** Watch connect and disconnect events are logged to the
+        audit trail with the watcher's user ID, session ID, and timestamps.
+      tags: [Shell]
+      x-nist-controls: [AC-3, AC-6, AU-2, AU-3]
+      x-owasp: [A01, API1, API3, API5]
+      x-audit-event: shell.session.watch.start
+      parameters:
+        - $ref: "#/components/parameters/PathAgentId"
+        - $ref: "#/components/parameters/PathSessionId"
+      responses:
+        "101":
+          description: WebSocket connection established, watching session
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /agents/{agentId}/shell/sessions/{sessionId}/control:
+    post:
+      operationId: takeSessionControl
+      summary: Take control of a shell session
+      description: |
+        Transfers terminal control to the requesting user. The current
+        controller (if any) is demoted to watcher and notified via a
+        WebSocket `control_transferred` message. Their connection remains
+        open in read-only mode.
+
+        The requesting user must already be connected to the session as a
+        watcher via the `/ws` or `/watch` WebSocket endpoint. If not
+        connected, returns 409 Conflict.
+
+        **Control transfer rules:**
+        - Session owner can always reclaim control regardless of who holds it
+        - org_admin+ can take control of any session within their tenant
+        - org_member can only take control of their own sessions
+        - CI token: requires `shell:control` scope
+
+        **NIST AC-3:** Role-based authorization enforced before transfer.
+        **NIST AC-6:** Least privilege — members restricted to own sessions.
+        **NIST AU-2:** Control transfer logged with previous and new controller
+        user IDs, session ID, and transfer reason.
+      tags: [Shell]
+      x-nist-controls: [AC-3, AC-6, AU-2, AU-3]
+      x-owasp: [A01, API1, API5]
+      x-audit-event: shell.session.control.transferred
+      parameters:
+        - $ref: "#/components/parameters/PathAgentId"
+        - $ref: "#/components/parameters/PathSessionId"
+      responses:
+        "200":
+          description: Control transferred successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessionId, controller]
+                properties:
+                  sessionId:
+                    type: string
+                    format: uuid
+                  controller:
+                    type: string
+                    format: uuid
+                    description: User ID of the new controller
+                  previousController:
+                    type:
+                      - string
+                      - "null"
+                    format: uuid
+                    description: User ID of the previous controller (null if session was detached)
+                additionalProperties: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
-          description: Session already has an active attachment (only one browser at a time)
+          $ref: "#/components/responses/Conflict"
+
+  /agents/{agentId}/shell/sessions/{sessionId}/presence:
+    get:
+      operationId: getSessionPresence
+      summary: Get session presence information
+      description: |
+        Returns information about who is currently connected to a shell
+        session, including the controller and all active watchers.
+
+        **Authorization (NIST AC-3):**
+        - Session owner: always allowed
+        - org_admin+: allowed for any session
+        - org_member: own sessions only
+        - CI token: requires `shell:execute`, `shell:watch`, or `shell:control` scope
+
+        **NIST AU-3:** Response includes user IDs and connection timestamps
+        for accountability and session awareness.
+      tags: [Shell]
+      x-nist-controls: [AC-3, AU-3]
+      x-owasp: [A01, API1, API3]
+      parameters:
+        - $ref: "#/components/parameters/PathAgentId"
+        - $ref: "#/components/parameters/PathSessionId"
+      responses:
+        "200":
+          description: Session presence information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionPresence"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /agents/{agentId}/shell/sessions/{sessionId}/resize:
     post:
@@ -6871,6 +7047,80 @@ components:
             - string
             - "null"
           format: date-time
+        activeClients:
+          type: array
+          description: |
+            Currently connected clients (controller and watchers). Computed
+            from in-memory state, only populated on live sessions. Empty
+            array when session is detached or closed.
+          items:
+            type: object
+            required: [userId, role, connectedAt]
+            properties:
+              userId:
+                type: string
+                format: uuid
+              userEmail:
+                type: string
+                format: email
+              role:
+                type: string
+                enum: [controller, watcher]
+              connectedAt:
+                type: string
+                format: date-time
+            additionalProperties: false
+
+    SessionPresence:
+      type: object
+      required: [sessionId, clientCount]
+      additionalProperties: false
+      description: |
+        Real-time presence information for a shell session. Shows who is
+        connected and in what role. Computed from in-memory state — not
+        persisted. NIST AU-3: enables session awareness for oversight.
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        controller:
+          type:
+            - object
+            - "null"
+          description: The user currently holding terminal control (null if no controller)
+          properties:
+            userId:
+              type: string
+              format: uuid
+            userEmail:
+              type: string
+              format: email
+            connectedAt:
+              type: string
+              format: date-time
+          required: [userId, connectedAt]
+          additionalProperties: false
+        watchers:
+          type: array
+          items:
+            type: object
+            required: [userId, connectedAt]
+            properties:
+              userId:
+                type: string
+                format: uuid
+              userEmail:
+                type: string
+                format: email
+              connectedAt:
+                type: string
+                format: date-time
+            additionalProperties: false
+          description: Users connected in read-only watch mode
+        clientCount:
+          type: integer
+          minimum: 0
+          description: Total connected clients (controller + watchers)
 
     ShellRecording:
       type: object
