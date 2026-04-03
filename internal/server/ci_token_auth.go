@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -45,14 +46,31 @@ func (s *Server) ValidateCIToken(ctx context.Context, token string) (*auth.Claim
 		return nil, fmt.Errorf("ci token owner not found")
 	}
 
+	// Parse scopes from JSON array into Permissions field
+	var scopes []string
+	if err := json.Unmarshal([]byte(ciToken.Scopes), &scopes); err != nil {
+		scopes = nil
+	}
+
 	// Build synthetic claims scoped by the CI token's permissions
 	claims := &auth.Claims{
-		TenantID: ciToken.TenantID,
-		Roles:    []string{user.Role},
-		Services: []string{"remote-access"},
+		TenantID:    ciToken.TenantID,
+		Roles:       []string{user.Role},
+		Permissions: scopes,
+		Services:    []string{"remote-access"},
 	}
 	claims.Subject = ciToken.CreatedBy
 	claims.Issuer = "conduit-ci-token"
 
 	return claims, nil
+}
+
+// hasPermission checks if claims include a specific permission scope.
+func hasPermission(claims *auth.Claims, scope string) bool {
+	for _, p := range claims.Permissions {
+		if p == scope {
+			return true
+		}
+	}
+	return false
 }

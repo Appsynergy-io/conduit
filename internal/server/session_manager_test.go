@@ -112,16 +112,15 @@ func wsTestPair(t *testing.T) (*protocol.Mux, *httptest.Server) {
 // ---------------------------------------------------------------------------
 
 func TestLiveSession_IsDetached(t *testing.T) {
-	ls := &LiveSession{}
-	assert.True(t, ls.IsDetached(), "should be detached when browserConn is nil")
+	ls := &LiveSession{clients: make(map[string]*SessionClient)}
+	assert.True(t, ls.IsDetached(), "should be detached when no clients connected")
 
-	// Simulating an attached state requires a real websocket.Conn;
-	// instead verify the mutex-protected field directly.
+	// Add a client to simulate attached state
 	ls.mu.Lock()
-	ls.browserConn = &ws.Conn{} // non-nil sentinel
+	ls.clients["test"] = &SessionClient{ID: "test", Role: roleController}
 	ls.mu.Unlock()
 
-	assert.False(t, ls.IsDetached(), "should not be detached when browserConn is set")
+	assert.False(t, ls.IsDetached(), "should not be detached when clients are connected")
 }
 
 func TestLiveSession_DetachedSince_NotDetached(t *testing.T) {

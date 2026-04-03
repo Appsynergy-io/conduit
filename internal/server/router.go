@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/appsynergy-io/conduit/internal/apierror"
+	"github.com/appsynergy-io/conduit/internal/auth"
 	"github.com/appsynergy-io/conduit/internal/db"
 	"github.com/appsynergy-io/conduit/internal/middleware"
 	"github.com/appsynergy-io/conduit/internal/protocol"
@@ -127,10 +128,11 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 		"user_id", claims.Subject,
 	)
 
-	// Send session ID to browser so it can use pin/pop-out features
+	// Send session ID and role to browser
 	sessionMsg, _ := json.Marshal(map[string]string{
 		"type":      "session",
 		"sessionId": ls.ID,
+		"role":      roleController,
 	})
 	writeCtx, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
 	if err := browserConn.Write(writeCtx, websocket.MessageText, sessionMsg); err != nil {
@@ -140,11 +142,24 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeCancel()
 
-	// Attach browser — blocks until browser disconnects.
-	// When browser disconnects, session enters detached state (PTY stays alive).
-	if err := s.sessionMgr.AttachBrowser(r.Context(), ls, browserConn); err != nil {
+	// Record client connection for audit (NIST AU-2)
+	clientRecord := &db.ShellSessionClient{
+		ID:          uuid.NewString(),
+		TenantID:    claims.TenantID,
+		SessionID:   ls.ID,
+		UserID:      claims.Subject,
+		Role:        roleController,
+		ConnectedAt: db.Now(),
+	}
+	_ = s.db.InsertShellSessionClient(r.Context(), clientRecord)
+
+	// Attach as controller — blocks until browser disconnects.
+	if err := s.sessionMgr.AttachClient(r.Context(), ls, browserConn, claims.Subject, roleController); err != nil {
 		s.logger.Debug("browser attach ended", "session_id", ls.ID, "error", err)
 	}
+
+	// Record disconnection for audit
+	_ = s.db.DisconnectShellSessionClient(r.Context(), clientRecord.ID)
 
 	// Audit detach
 	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
@@ -160,8 +175,8 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleShellAttach handles a browser WebSocket reconnecting to an existing
-// detached shell session. Replays buffered output, then resumes live I/O.
+// handleShellAttach handles a browser WebSocket connecting to an existing
+// shell session. Supports multi-client mode via ?mode=control|watch.
 //
 // GET /api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws (WebSocket upgrade)
 func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
@@ -169,16 +184,18 @@ func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionId")
 
 	// Authenticate (NIST IA-2, IA-11)
-	tokenStr := middleware.ExtractToken(r)
-	if tokenStr == "" {
-		apierror.Unauthorized(w, r, "Authentication required.", nil)
-		return
+	claims, err := s.authenticateShellRequest(w, r)
+	if err != nil {
+		return // response already sent
 	}
 
-	claims, err := s.jwtMgr.ValidateToken(tokenStr)
-	if err != nil {
-		apierror.Unauthorized(w, r, "Invalid or expired token.", nil)
-		return
+	// Parse mode (default: control)
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = roleController
+	}
+	if mode != roleController && mode != roleWatcher {
+		mode = roleController
 	}
 
 	// Look up live session
@@ -187,10 +204,115 @@ func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
 		apierror.NotFound(w, r, "Session not found or already closed.", nil)
 		return
 	}
+	if ls.AgentID != agentID {
+		apierror.NotFound(w, r, "Session not found on this agent.", nil)
+		return
+	}
 
-	// Ownership check (NIST AC-3, OWASP API1 BOLA)
-	if ls.UserID != claims.Subject {
-		apierror.Forbidden(w, r, "Not the session owner.", nil)
+	// Authorization check (NIST AC-3, AC-6, OWASP API1)
+	if !s.authorizeSessionAccess(w, r, ls, claims, mode) {
+		return // response already sent
+	}
+
+	// Upgrade WebSocket
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols: []string{"conduit-shell-v1"},
+	})
+	if err != nil {
+		s.logger.Error("shell attach websocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Send session info with role
+	sessionMsg, _ := json.Marshal(map[string]string{
+		"type":      "session",
+		"sessionId": sessionID,
+		"role":      mode,
+	})
+	writeCtx, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	if err := conn.Write(writeCtx, websocket.MessageText, sessionMsg); err != nil {
+		writeCancel()
+		return
+	}
+	writeCancel()
+
+	eventType := "shell.attach"
+	if mode == roleWatcher {
+		eventType = "shell.session.watch.start"
+	}
+
+	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
+		ID:        uuid.NewString(),
+		TenantID:  claims.TenantID,
+		EventType: eventType,
+		UserID:    &claims.Subject,
+		AgentID:   &agentID,
+		SourceIP:  strPtr(r.RemoteAddr),
+		Details:   strPtr(fmt.Sprintf(`{"session_id":"%s","mode":"%s"}`, sessionID, mode)),
+		Outcome:   "success",
+	})
+
+	// Record client connection for audit (NIST AU-2)
+	clientRecord := &db.ShellSessionClient{
+		ID:          uuid.NewString(),
+		TenantID:    claims.TenantID,
+		SessionID:   sessionID,
+		UserID:      claims.Subject,
+		Role:        mode,
+		ConnectedAt: db.Now(),
+	}
+	_ = s.db.InsertShellSessionClient(r.Context(), clientRecord)
+
+	s.logger.Info("client attaching to session",
+		"session_id", sessionID,
+		"agent_id", agentID,
+		"user_id", claims.Subject,
+		"mode", mode,
+	)
+
+	// Attach — blocks until client disconnects
+	if err := s.sessionMgr.AttachClient(r.Context(), ls, conn, claims.Subject, mode); err != nil {
+		s.logger.Debug("client attach ended", "session_id", sessionID, "error", err)
+	}
+
+	// Record disconnection
+	_ = s.db.DisconnectShellSessionClient(r.Context(), clientRecord.ID)
+
+	if mode == roleWatcher {
+		s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
+			ID:        uuid.NewString(),
+			TenantID:  claims.TenantID,
+			EventType: "shell.session.watch.end",
+			UserID:    &claims.Subject,
+			AgentID:   &agentID,
+			SourceIP:  strPtr(r.RemoteAddr),
+			Details:   strPtr(fmt.Sprintf(`{"session_id":"%s"}`, sessionID)),
+			Outcome:   "success",
+		})
+	}
+}
+
+// handleShellWatch handles a read-only WebSocket connection to watch a session.
+// GET /api/v1/agents/{agentId}/shell/sessions/{sessionId}/watch (WebSocket upgrade)
+func (s *Server) handleShellWatch(w http.ResponseWriter, r *http.Request) {
+	// Force watch mode by setting query param, then delegate to handleShellAttach
+	q := r.URL.Query()
+	q.Set("mode", roleWatcher)
+	r.URL.RawQuery = q.Encode()
+	s.handleShellAttach(w, r)
+}
+
+// handleTakeControl transfers terminal control to the requesting user.
+// POST /api/v1/agents/{agentId}/shell/sessions/{sessionId}/control
+func (s *Server) handleTakeControl(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	agentID := chi.URLParam(r, "agentId")
+	sessionID := chi.URLParam(r, "sessionId")
+
+	ls := s.sessionMgr.Get(sessionID)
+	if ls == nil {
+		apierror.NotFound(w, r, "Session not found or already closed.", nil)
 		return
 	}
 	if ls.AgentID != agentID {
@@ -198,37 +320,173 @@ func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Upgrade browser connection
-	browserConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		Subprotocols: []string{"conduit-shell-v1"},
-	})
-	if err != nil {
-		s.logger.Error("shell attach websocket upgrade failed", "error", err)
+	// Authorization (NIST AC-3, AC-6)
+	if !s.authorizeSessionAccess(w, r, ls, claims, roleController) {
 		return
 	}
-	defer browserConn.Close(websocket.StatusNormalClosure, "")
 
-	s.logger.Info("browser reattaching to session",
-		"session_id", sessionID,
-		"agent_id", agentID,
-		"user_id", claims.Subject,
-	)
+	// Find the client connection for this user
+	client := ls.GetClientByUserID(claims.Subject)
+	if client == nil {
+		apierror.Write(w, r, http.StatusConflict, "Conflict",
+			"Not connected to this session. Connect via WebSocket first.", nil)
+		return
+	}
 
+	// Get previous controller info
+	ls.mu.Lock()
+	var prevControllerID string
+	if ls.controller != nil {
+		prevControllerID = ls.controller.UserID
+	}
+	ls.mu.Unlock()
+
+	// Transfer control
+	s.sessionMgr.TransferControl(r.Context(), ls, client)
+
+	// Audit
 	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
-		ID:            uuid.NewString(),
-		TenantID:      claims.TenantID,
-		EventType:     "shell.attach",
-		UserID:        &claims.Subject,
-		AgentID:       &agentID,
-		SourceIP:      strPtr(r.RemoteAddr),
-		Details:       strPtr(`{"session_id":"` + sessionID + `"}`),
-		Outcome:       "success",
+		ID:        uuid.NewString(),
+		TenantID:  claims.TenantID,
+		EventType: "shell.session.control.transferred",
+		UserID:    &claims.Subject,
+		AgentID:   &agentID,
+		SourceIP:  strPtr(r.RemoteAddr),
+		Details:   strPtr(fmt.Sprintf(`{"session_id":"%s","from_user_id":"%s","to_user_id":"%s"}`, sessionID, prevControllerID, claims.Subject)),
+		Outcome:   "success",
 	})
 
-	// Attach — blocks until browser disconnects again
-	if err := s.sessionMgr.AttachBrowser(r.Context(), ls, browserConn); err != nil {
-		s.logger.Debug("browser reattach ended", "session_id", sessionID, "error", err)
+	resp := map[string]interface{}{
+		"sessionId":  sessionID,
+		"controller": claims.Subject,
 	}
+	if prevControllerID != "" {
+		resp["previousController"] = prevControllerID
+	} else {
+		resp["previousController"] = nil
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleSessionPresence returns who is connected to a session.
+// GET /api/v1/agents/{agentId}/shell/sessions/{sessionId}/presence
+func (s *Server) handleSessionPresence(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+	agentID := chi.URLParam(r, "agentId")
+
+	ls := s.sessionMgr.Get(sessionID)
+	if ls == nil {
+		apierror.NotFound(w, r, "Session not found or already closed.", nil)
+		return
+	}
+	if ls.AgentID != agentID {
+		apierror.NotFound(w, r, "Session not found on this agent.", nil)
+		return
+	}
+
+	// Authorization (NIST AC-3) — same as session read access
+	if ls.UserID != claims.Subject && !isAdmin(claims.Roles) {
+		if claims.Issuer == "conduit-ci-token" {
+			if !hasPermission(claims, "shell:execute") && !hasPermission(claims, "shell:watch") && !hasPermission(claims, "shell:control") {
+				apierror.Forbidden(w, r, "Insufficient permissions.", nil)
+				return
+			}
+		} else {
+			apierror.Forbidden(w, r, "Not the session owner.", nil)
+			return
+		}
+	}
+
+	ls.mu.Lock()
+	var controller interface{}
+	if ls.controller != nil {
+		controller = map[string]string{
+			"userId":      ls.controller.UserID,
+			"connectedAt": ls.controller.JoinedAt.UTC().Format(time.RFC3339),
+		}
+	}
+
+	watchers := make([]map[string]string, 0)
+	for _, c := range ls.clients {
+		if c.Role == roleWatcher {
+			watchers = append(watchers, map[string]string{
+				"userId":      c.UserID,
+				"connectedAt": c.JoinedAt.UTC().Format(time.RFC3339),
+			})
+		}
+	}
+	clientCount := len(ls.clients)
+	ls.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"sessionId":   sessionID,
+		"controller":  controller,
+		"watchers":    watchers,
+		"clientCount": clientCount,
+	})
+}
+
+// authenticateShellRequest extracts and validates a JWT from a WebSocket request.
+// Handles both JWT and CI token auth. Returns claims or sends error response.
+func (s *Server) authenticateShellRequest(w http.ResponseWriter, r *http.Request) (*auth.Claims, error) {
+	tokenStr := middleware.ExtractToken(r)
+	if tokenStr == "" {
+		apierror.Unauthorized(w, r, "Authentication required.", nil)
+		return nil, fmt.Errorf("no token")
+	}
+
+	// Check for CI token
+	if len(tokenStr) > 5 && tokenStr[:5] == middleware.CITokenPrefix {
+		claims, err := s.ValidateCIToken(r.Context(), tokenStr)
+		if err != nil {
+			apierror.Unauthorized(w, r, "Invalid or expired token.", nil)
+			return nil, err
+		}
+		return claims, nil
+	}
+
+	claims, err := s.jwtMgr.ValidateToken(tokenStr)
+	if err != nil {
+		apierror.Unauthorized(w, r, "Invalid or expired token.", nil)
+		return nil, err
+	}
+	return claims, nil
+}
+
+// authorizeSessionAccess checks if claims authorize access to a session in the given mode.
+// Returns true if authorized, false if error response was sent.
+func (s *Server) authorizeSessionAccess(w http.ResponseWriter, r *http.Request, ls *LiveSession, claims *auth.Claims, mode string) bool {
+	// Session owner always has access
+	if ls.UserID == claims.Subject {
+		return true
+	}
+
+	// CI token scope check
+	if claims.Issuer == "conduit-ci-token" {
+		if mode == roleController {
+			if !hasPermission(claims, "shell:control") {
+				apierror.Forbidden(w, r, "Insufficient permissions. Requires shell:control scope.", nil)
+				return false
+			}
+			return true
+		}
+		// Watch mode
+		if !hasPermission(claims, "shell:watch") && !hasPermission(claims, "shell:control") {
+			apierror.Forbidden(w, r, "Insufficient permissions. Requires shell:watch scope.", nil)
+			return false
+		}
+		return true
+	}
+
+	// Role-based: admins can access any session
+	if isAdmin(claims.Roles) {
+		return true
+	}
+
+	// org_member trying to access someone else's session
+	apierror.Forbidden(w, r, "Not the session owner.", nil)
+	return false
 }
 
 // handleListAllShellSessions lists shell sessions across all agents.

@@ -156,17 +156,19 @@ func (d *DB) ListCITokensPaginated(ctx context.Context, p CITokenListParams) ([]
 
 // ValidCITokenScopes defines the allowed scope values for CI tokens.
 var ValidCITokenScopes = map[string]bool{
-	"agents:read":  true,
-	"agents:write": true,
+	"agents:read":   true,
+	"agents:write":  true,
 	"shell:execute": true,
-	"files:read":   true,
-	"files:write":  true,
-	"exec:run":     true,
-	"audit:read":   true,
-	"users:read":   true,
-	"users:write":  true,
-	"config:read":  true,
-	"config:write": true,
+	"shell:watch":   true,
+	"shell:control": true,
+	"files:read":    true,
+	"files:write":   true,
+	"exec:run":      true,
+	"audit:read":    true,
+	"users:read":    true,
+	"users:write":   true,
+	"config:read":   true,
+	"config:write":  true,
 }
 
 // ValidateCITokenScopes checks that all scopes are valid and returns an error message if not.
