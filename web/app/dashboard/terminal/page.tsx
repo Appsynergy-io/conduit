@@ -37,6 +37,8 @@ function TerminalContent() {
   const { isAuthenticated } = useAuth()
   const agentId = searchParams.get("agent")
   const attachSessionId = searchParams.get("session")
+  const modeParam = searchParams.get("mode")
+  const connectMode = modeParam === "watch" ? "watch" : "control" as "control" | "watch"
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -278,6 +280,7 @@ function TerminalContent() {
           agentId={agentId}
           agentHostname={agent?.displayName ?? agent?.hostname}
           sessionId={resolvedSessionId}
+          mode={connectMode}
           onClose={handleClose}
           onSessionReady={handleSessionReady}
           hideHeader

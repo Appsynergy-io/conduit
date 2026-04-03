@@ -1,6 +1,6 @@
 "use client"
 
-import { ExternalLink, Pin, PinOff, X } from "lucide-react"
+import { ExternalLink, Eye, Pin, PinOff, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -12,12 +12,15 @@ import {
 } from "@/components/ui/tooltip"
 
 type TerminalStatus = "connecting" | "connected" | "disconnected" | "error" | "detached"
+type SessionRole = "controller" | "watcher"
 
 interface TerminalProps {
   agentId: string
   agentHostname?: string
   /** If provided, attaches to an existing session instead of creating one */
   sessionId?: string
+  /** Connection mode: "control" (default) or "watch" (read-only) */
+  mode?: "control" | "watch"
   onClose?: () => void
   /** Called when session is created or attached, provides session ID for other controls */
   onSessionReady?: (sessionId: string) => void
@@ -27,6 +30,7 @@ export function TerminalView({
   agentId,
   agentHostname,
   sessionId,
+  mode = "control",
   onClose,
   onSessionReady,
   hideHeader,
@@ -38,6 +42,9 @@ export function TerminalView({
   const [status, setStatus] = useState<TerminalStatus>("connecting")
   const [pinned, setPinned] = useState(false)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId ?? null)
+  const [role, setRole] = useState<SessionRole>(mode === "watch" ? "watcher" : "controller")
+  const [watcherCount, setWatcherCount] = useState(0)
+  const roleRef = useRef<SessionRole>(mode === "watch" ? "watcher" : "controller")
 
   const cleanup = useCallback(() => {
     if (wsRef.current) {
@@ -129,16 +136,22 @@ export function TerminalView({
       fitAddonRef.current = fitAddon
 
       // Build WebSocket URL
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:"
       const { cols, rows } = term
 
       let wsUrl: string
       if (sessionId) {
         // Reattach to existing session
-        wsUrl = `${protocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(sessionId)}/ws`
+        const wsMode = mode === "watch" ? "watch" : "control"
+        if (mode === "watch") {
+          // Use dedicated watch endpoint
+          wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(sessionId)}/watch`
+        } else {
+          wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(sessionId)}/ws?mode=${wsMode}`
+        }
       } else {
         // Create new session (legacy path, handled by server)
-        wsUrl = `${protocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/new?cols=${cols}&rows=${rows}`
+        wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/new?cols=${cols}&rows=${rows}`
       }
 
       const ws = new WebSocket(wsUrl, "conduit-shell-v1")
@@ -158,12 +171,44 @@ export function TerminalView({
         } else if (typeof event.data === "string") {
           try {
             const msg = JSON.parse(event.data)
-            if (msg.type === "session" && msg.sessionId) {
-              setActiveSessionId(msg.sessionId)
-              onSessionReady?.(msg.sessionId)
-            } else if (msg.type === "detached") {
-              setStatus("detached")
-              term.write("\r\n\x1b[90m--- Session detached ---\x1b[0m\r\n")
+            switch (msg.type) {
+              case "session":
+                if (msg.sessionId) {
+                  setActiveSessionId(msg.sessionId)
+                  onSessionReady?.(msg.sessionId)
+                }
+                if (msg.role) {
+                  setRole(msg.role)
+                  roleRef.current = msg.role
+                }
+                break
+              case "detached":
+                setStatus("detached")
+                term.write("\r\n\x1b[90m--- Session detached ---\x1b[0m\r\n")
+                break
+              case "control_transferred":
+                setRole("watcher")
+                roleRef.current = "watcher"
+                term.write(`\r\n\x1b[93m--- Control transferred to another user ---\x1b[0m\r\n`)
+                break
+              case "control_granted":
+                setRole("controller")
+                roleRef.current = "controller"
+                term.write(`\r\n\x1b[92m--- You now have control ---\x1b[0m\r\n`)
+                break
+              case "controller_changed":
+                // Informational for watchers
+                break
+              case "watcher_joined":
+                setWatcherCount(msg.watcherCount ?? 0)
+                break
+              case "watcher_left":
+                setWatcherCount(msg.watcherCount ?? 0)
+                break
+              case "exit":
+                setStatus("disconnected")
+                term.write("\r\n\x1b[90m--- Session ended ---\x1b[0m\r\n")
+                break
             }
           } catch {
             term.write(event.data)
@@ -187,14 +232,16 @@ export function TerminalView({
         setStatus("error")
       }
 
-      // Terminal -> WebSocket
+      // Terminal -> WebSocket (controller only — watchers silently discarded)
       term.onData((data) => {
+        if (roleRef.current === "watcher") return
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(new TextEncoder().encode(data))
         }
       })
 
       term.onBinary((data) => {
+        if (roleRef.current === "watcher") return
         if (ws.readyState === WebSocket.OPEN) {
           const bytes = new Uint8Array(data.length)
           for (let i = 0; i < data.length; i++) {
@@ -205,6 +252,7 @@ export function TerminalView({
       })
 
       term.onResize(({ cols, rows }) => {
+        if (roleRef.current === "watcher") return
         if (ws.readyState === WebSocket.OPEN) {
           const resizeMsg = JSON.stringify({ type: "resize", cols, rows })
           ws.send(new TextEncoder().encode(resizeMsg))
@@ -237,7 +285,13 @@ export function TerminalView({
       cleanupObserver?.()
       cleanup()
     }
-  }, [agentId, sessionId, cleanup, onSessionReady])
+  }, [agentId, sessionId, mode, cleanup, onSessionReady])
+
+  const takeControl = useCallback(() => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(new TextEncoder().encode(JSON.stringify({ type: "take_control" })))
+  }, [])
 
   return (
     <div className="flex h-full flex-col" data-testid="terminal-view">
@@ -245,9 +299,19 @@ export function TerminalView({
         <div className="flex items-center justify-between border-b px-4 py-2">
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium">{agentHostname ?? agentId}</span>
-            <StatusBadge status={status} pinned={pinned} />
+            <StatusBadge status={status} pinned={pinned} role={role} watcherCount={watcherCount} />
           </div>
           <div className="flex items-center gap-1">
+            {role === "watcher" && status === "connected" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={takeControl}
+                className="h-7 text-xs"
+              >
+                Take Control
+              </Button>
+            )}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -255,7 +319,7 @@ export function TerminalView({
                     variant="ghost"
                     size="icon"
                     onClick={togglePin}
-                    disabled={!activeSessionId}
+                    disabled={!activeSessionId || role === "watcher"}
                     aria-label={pinned ? "Unpin session" : "Pin session"}
                     className="h-7 w-7"
                   >
@@ -293,7 +357,17 @@ export function TerminalView({
   )
 }
 
-function StatusBadge({ status, pinned }: { status: TerminalStatus; pinned: boolean }) {
+function StatusBadge({
+  status,
+  pinned,
+  role,
+  watcherCount,
+}: {
+  status: TerminalStatus
+  pinned: boolean
+  role: SessionRole
+  watcherCount: number
+}) {
   switch (status) {
     case "connecting":
       return (
@@ -304,8 +378,21 @@ function StatusBadge({ status, pinned }: { status: TerminalStatus; pinned: boole
     case "connected":
       return (
         <div className="flex items-center gap-1.5">
-          <Badge className="bg-green-600 text-white text-xs">Connected</Badge>
+          {role === "watcher" ? (
+            <Badge className="bg-blue-600 text-white text-xs">
+              <Eye className="mr-1 h-3 w-3" />
+              Watching
+            </Badge>
+          ) : (
+            <Badge className="bg-green-600 text-white text-xs">Connected</Badge>
+          )}
           {pinned && <Badge variant="outline" className="text-xs">Pinned</Badge>}
+          {watcherCount > 0 && role === "controller" && (
+            <Badge variant="outline" className="text-xs">
+              <Eye className="mr-1 h-3 w-3" />
+              {watcherCount}
+            </Badge>
+          )}
         </div>
       )
     case "detached":
