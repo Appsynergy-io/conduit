@@ -1,6 +1,6 @@
 "use client"
 
-import { Monitor, Pin, Square, RefreshCw } from "lucide-react"
+import { Monitor, Pin, Plus, Square, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -34,9 +34,11 @@ interface SessionListProps {
   onAttach?: (session: ShellSession) => void
   /** Called when a session is terminated */
   onTerminate?: (sessionId: string) => void
+  /** Called when user clicks "New session" */
+  onNewSession?: () => void
 }
 
-export function SessionList({ agentId, activeSessionId, onAttach, onTerminate }: SessionListProps) {
+export function SessionList({ agentId, activeSessionId, onAttach, onTerminate, onNewSession }: SessionListProps) {
   const [sessions, setSessions] = useState<ShellSession[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -87,7 +89,15 @@ export function SessionList({ agentId, activeSessionId, onAttach, onTerminate }:
 
   if (sessions.length === 0) {
     return (
-      <div className="text-sm text-muted-foreground p-3">No active sessions</div>
+      <div className="flex flex-col items-center gap-3 p-4 text-center">
+        <p className="text-sm text-muted-foreground">No active sessions</p>
+        {onNewSession && (
+          <Button variant="outline" size="sm" onClick={onNewSession}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            New session
+          </Button>
+        )}
+      </div>
     )
   }
 
@@ -97,9 +107,21 @@ export function SessionList({ agentId, activeSessionId, onAttach, onTerminate }:
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           Sessions ({sessions.length})
         </span>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSessions}>
-          <RefreshCw className="h-3 w-3" />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onNewSession}>
+                  <Plus className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>New session</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchSessions}>
+            <RefreshCw className="h-3 w-3" />
+          </Button>
+        </div>
       </div>
       {sessions.map((session) => (
         <SessionItem

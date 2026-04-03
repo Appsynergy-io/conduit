@@ -48,8 +48,8 @@ func (a *Agent) startShell(ctx context.Context, mux protocol.FrameMux, streamID 
 
 	shellCtx, shellCancel := context.WithCancel(ctx)
 
-	cmd := exec.CommandContext(shellCtx, shell)
-	cmd.Env = buildShellEnv()
+	cmd := exec.CommandContext(shellCtx, shell, "-l")
+	cmd.Env = buildLoginEnv()
 
 	// Start PTY
 	ptmx, err := pty.Start(cmd)
@@ -282,19 +282,39 @@ func splitColon(s string) []string {
 	return parts
 }
 
-// buildShellEnv constructs the environment for the shell process.
-func buildShellEnv() []string {
-	env := os.Environ()
-	// Set TERM if not already present
-	hasTerm := false
-	for _, e := range env {
-		if hasPrefix(e, "TERM=") {
-			hasTerm = true
-			break
+// buildLoginEnv constructs a minimal environment for a login shell.
+// A login shell (-l) sources /etc/profile and ~/.profile, which set PATH
+// and other variables. Passing the daemon's full os.Environ() would override
+// the login shell's own PATH construction, so we only set the essentials.
+func buildLoginEnv() []string {
+	u, _ := user.Current()
+	home := "/"
+	username := "root"
+	userShell := "/bin/sh"
+	if u != nil {
+		home = u.HomeDir
+		username = u.Username
+		userShell = lookupShell(u.Username)
+		if userShell == "" {
+			userShell = "/bin/sh"
 		}
 	}
-	if !hasTerm {
-		env = append(env, "TERM=xterm-256color")
+
+	env := []string{
+		"TERM=xterm-256color",
+		"HOME=" + home,
+		"USER=" + username,
+		"LOGNAME=" + username,
+		"SHELL=" + userShell,
+		"LANG=" + getLang(),
 	}
 	return env
+}
+
+// getLang returns the current LANG or a sensible default.
+func getLang() string {
+	if lang := os.Getenv("LANG"); lang != "" {
+		return lang
+	}
+	return "C.UTF-8"
 }
