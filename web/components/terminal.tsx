@@ -29,7 +29,8 @@ export function TerminalView({
   sessionId,
   onClose,
   onSessionReady,
-}: TerminalProps) {
+  hideHeader,
+}: TerminalProps & { hideHeader?: boolean }) {
   const termRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null)
@@ -240,51 +241,53 @@ export function TerminalView({
 
   return (
     <div className="flex h-full flex-col" data-testid="terminal-view">
-      <div className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium">{agentHostname ?? agentId}</span>
-          <StatusBadge status={status} pinned={pinned} />
+      {!hideHeader && (
+        <div className="flex items-center justify-between border-b px-4 py-2">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium">{agentHostname ?? agentId}</span>
+            <StatusBadge status={status} pinned={pinned} />
+          </div>
+          <div className="flex items-center gap-1">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={togglePin}
+                    disabled={!activeSessionId}
+                    aria-label={pinned ? "Unpin session" : "Pin session"}
+                    className="h-7 w-7"
+                  >
+                    {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{pinned ? "Unpin (allow idle timeout)" : "Pin (keep alive forever)"}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={popOut}
+                    disabled={!activeSessionId}
+                    aria-label="Pop out"
+                    className="h-7 w-7"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Pop out to new window</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            {onClose && (
+              <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close terminal" className="h-7 w-7">
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={togglePin}
-                  disabled={!activeSessionId}
-                  aria-label={pinned ? "Unpin session" : "Pin session"}
-                  className="h-7 w-7"
-                >
-                  {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{pinned ? "Unpin (allow idle timeout)" : "Pin (keep alive forever)"}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={popOut}
-                  disabled={!activeSessionId}
-                  aria-label="Pop out"
-                  className="h-7 w-7"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Pop out to new window</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          {onClose && (
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close terminal" className="h-7 w-7">
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </div>
-      </div>
+      )}
       <div ref={termRef} className="flex-1 bg-[#09090b] p-1" data-testid="terminal-container" />
     </div>
   )

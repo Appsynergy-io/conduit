@@ -1,12 +1,20 @@
 "use client"
 
-import { AlertCircle, WifiOff } from "lucide-react"
+import { AlertCircle, ExternalLink, Pin, PinOff, WifiOff, X } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useCallback, useRef, useState } from "react"
-import { SessionList } from "@/components/session-list"
+import { SessionTabs } from "@/components/session-tabs"
 import { TerminalView } from "@/components/terminal"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { useAuth } from "@/hooks/use-auth"
 import { useEffect } from "react"
 
@@ -35,6 +43,7 @@ function TerminalContent() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(attachSessionId)
   // Track the resolved session ID (existing session to reuse, or null to create new)
   const [resolvedSessionId, setResolvedSessionId] = useState<string | undefined>(attachSessionId ?? undefined)
+  const [newSessionCounter, setNewSessionCounter] = useState(0)
   const resolvedRef = useRef(false)
 
   useEffect(() => {
@@ -119,9 +128,43 @@ function TerminalContent() {
     [router],
   )
 
+  const [pinned, setPinned] = useState(false)
+
   const handleSessionReady = useCallback((sessionId: string) => {
     setCurrentSessionId(sessionId)
+    setPinned(false)
   }, [])
+
+  const handleNewSession = useCallback(() => {
+    setResolvedSessionId(undefined)
+    setCurrentSessionId(null)
+    setPinned(false)
+    setNewSessionCounter((c) => c + 1)
+    router.replace(`/dashboard/terminal?agent=${encodeURIComponent(agentId!)}`)
+  }, [agentId, router])
+
+  const togglePin = useCallback(async () => {
+    if (!currentSessionId || !agentId) return
+    try {
+      const res = await fetch(
+        `/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(currentSessionId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pinned: !pinned }),
+        },
+      )
+      if (res.ok) setPinned(!pinned)
+    } catch {
+      // ignore
+    }
+  }, [currentSessionId, agentId, pinned])
+
+  const popOut = useCallback(() => {
+    if (!currentSessionId) return
+    const url = `/terminal/pop?session=${encodeURIComponent(currentSessionId)}`
+    window.open(url, `conduit-terminal-${currentSessionId}`, "width=900,height=600,menubar=no,toolbar=no")
+  }, [currentSessionId])
 
   if (!agentId) {
     return (
@@ -171,21 +214,73 @@ function TerminalContent() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] gap-4">
-      {/* Session list sidebar */}
-      <div className="w-64 shrink-0 overflow-y-auto rounded-lg border bg-card">
-        <SessionList agentId={agentId} activeSessionId={currentSessionId ?? undefined} onAttach={handleAttach} />
+    <div className="flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border">
+      {/* Tab bar */}
+      <div className="flex items-center justify-between border-b bg-card px-2">
+        <div className="flex items-center gap-2 overflow-hidden">
+          <span className="shrink-0 text-sm font-medium pl-2 text-muted-foreground">
+            {agent?.displayName ?? agent?.hostname}
+          </span>
+          <span className="text-border">|</span>
+          <SessionTabs
+            agentId={agentId}
+            activeSessionId={currentSessionId ?? undefined}
+            onSelect={handleAttach}
+            onNewSession={handleNewSession}
+          />
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0 pl-2">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={togglePin}
+                  disabled={!currentSessionId}
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                >
+                  {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{pinned ? "Unpin (allow idle timeout)" : "Pin (keep alive forever)"}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={popOut}
+                  disabled={!currentSessionId}
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Pop out to new window</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleClose}
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
       {/* Terminal */}
-      <div className="flex-1 overflow-hidden rounded-lg border">
+      <div className="flex-1 overflow-hidden">
         <TerminalView
-          key={resolvedSessionId ?? "new"}
+          key={resolvedSessionId ?? `new-${newSessionCounter}`}
           agentId={agentId}
           agentHostname={agent?.displayName ?? agent?.hostname}
           sessionId={resolvedSessionId}
           onClose={handleClose}
           onSessionReady={handleSessionReady}
+          hideHeader
         />
       </div>
     </div>
