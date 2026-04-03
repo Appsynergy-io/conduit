@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -40,7 +39,7 @@ func main() {
 }
 
 func run(cmd *cobra.Command, _ []string) error {
-	ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()
 
 	dev, _ := cmd.Flags().GetBool("dev")

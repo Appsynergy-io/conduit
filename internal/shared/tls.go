@@ -17,10 +17,19 @@ import (
 	"time"
 )
 
-// pqcCurvePreferences defines the TLS key exchange preference order.
-// X25519MLKEM768 (PQC hybrid) is preferred; X25519 (classical) is the fallback
-// for clients that do not support ML-KEM.
-var pqcCurvePreferences = []tls.CurveID{tls.X25519MLKEM768, tls.X25519}
+// pqcCurvePreferences defines the set of allowed TLS key exchange mechanisms.
+// Go's internal preference order selects PQC (X25519MLKEM768) when the client
+// supports it; classical curves (X25519, P-256, P-384) cover older clients.
+// P-256 and P-384 are required for Windows Schannel compatibility (PowerShell
+// 5.1 / .NET Framework on Windows 10 does not support TLS 1.3, X25519MLKEM768,
+// and some builds lack X25519 — without NIST curves the handshake fails with
+// "An unexpected error occurred on a send").
+var pqcCurvePreferences = []tls.CurveID{
+	tls.X25519MLKEM768,
+	tls.X25519,
+	tls.CurveP256,
+	tls.CurveP384,
+}
 
 // DevTLSResult holds the generated self-signed cert and fingerprint for dev mode.
 type DevTLSResult struct {
@@ -49,7 +58,7 @@ func GenerateDevTLS() (*DevTLSResult, error) {
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		DNSNames:              []string{"localhost"},
@@ -77,7 +86,7 @@ func GenerateDevTLS() (*DevTLSResult, error) {
 
 	tlsConfig := &tls.Config{
 		Certificates:     []tls.Certificate{tlsCert},
-		MinVersion:       tls.VersionTLS13,
+		MinVersion:       tls.VersionTLS12,
 		MaxVersion:       tls.VersionTLS13,
 		CurvePreferences: pqcCurvePreferences,
 	}

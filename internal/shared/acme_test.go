@@ -93,9 +93,11 @@ func TestACMETLSConfig_PreservesPQC(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ACMETLSConfig(mgr)
-	require.Len(t, cfg.CurvePreferences, 2)
+	require.Len(t, cfg.CurvePreferences, 4)
 	assert.Equal(t, tls.X25519MLKEM768, cfg.CurvePreferences[0])
 	assert.Equal(t, tls.X25519, cfg.CurvePreferences[1])
+	assert.Equal(t, tls.CurveP256, cfg.CurvePreferences[2])
+	assert.Equal(t, tls.CurveP384, cfg.CurvePreferences[3])
 }
 
 func TestACMETLSConfig_TLS13Only(t *testing.T) {

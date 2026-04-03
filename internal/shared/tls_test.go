@@ -13,9 +13,11 @@ import (
 
 func TestProductionTLSConfig_CurvePreferences(t *testing.T) {
 	cfg := ProductionTLSConfig()
-	require.Len(t, cfg.CurvePreferences, 2)
+	require.Len(t, cfg.CurvePreferences, 4)
 	assert.Equal(t, tls.X25519MLKEM768, cfg.CurvePreferences[0], "PQC curve must be first preference")
 	assert.Equal(t, tls.X25519, cfg.CurvePreferences[1], "X25519 classical fallback must be second")
+	assert.Equal(t, tls.CurveP256, cfg.CurvePreferences[2], "P-256 for Schannel compatibility")
+	assert.Equal(t, tls.CurveP384, cfg.CurvePreferences[3], "P-384 for Schannel compatibility")
 }
 
 func TestProductionTLSConfig_TLS13Only(t *testing.T) {
@@ -35,15 +37,17 @@ func TestProductionTLSConfig_CipherSuites(t *testing.T) {
 func TestDevTLS_CurvePreferences(t *testing.T) {
 	result, err := GenerateDevTLS()
 	require.NoError(t, err)
-	require.Len(t, result.TLSConfig.CurvePreferences, 2)
+	require.Len(t, result.TLSConfig.CurvePreferences, 4)
 	assert.Equal(t, tls.X25519MLKEM768, result.TLSConfig.CurvePreferences[0], "PQC curve must be first preference")
 	assert.Equal(t, tls.X25519, result.TLSConfig.CurvePreferences[1], "X25519 classical fallback must be second")
+	assert.Equal(t, tls.CurveP256, result.TLSConfig.CurvePreferences[2], "P-256 for Schannel compatibility")
+	assert.Equal(t, tls.CurveP384, result.TLSConfig.CurvePreferences[3], "P-384 for Schannel compatibility")
 }
 
-func TestDevTLS_TLS13Only(t *testing.T) {
+func TestDevTLS_TLS12Minimum(t *testing.T) {
 	result, err := GenerateDevTLS()
 	require.NoError(t, err)
-	assert.Equal(t, uint16(tls.VersionTLS13), result.TLSConfig.MinVersion)
+	assert.Equal(t, uint16(tls.VersionTLS12), result.TLSConfig.MinVersion)
 	assert.Equal(t, uint16(tls.VersionTLS13), result.TLSConfig.MaxVersion)
 }
 
@@ -167,6 +171,45 @@ func TestTLSHandshake_ClassicalFallback(t *testing.T) {
 
 	state := <-done
 	assert.Equal(t, tls.X25519, state.CurveID, "should fall back to classical X25519")
+}
+
+func TestTLSHandshake_TLS12_P256Fallback(t *testing.T) {
+	// Simulates Windows 10 Schannel (PowerShell 5.1): TLS 1.2 only, P-256 only.
+	result, err := GenerateDevTLS()
+	require.NoError(t, err)
+
+	serverCfg := result.TLSConfig.Clone()
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverCfg)
+	require.NoError(t, err)
+	defer ln.Close()
+
+	done := make(chan tls.ConnectionState, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		tlsConn := conn.(*tls.Conn)
+		_ = tlsConn.Handshake()
+		done <- tlsConn.ConnectionState()
+	}()
+
+	// Client only supports TLS 1.2 with P-256 (like Windows 10 Schannel)
+	clientCfg := &tls.Config{
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS12,
+		MaxVersion:         tls.VersionTLS12,
+		CurvePreferences:   []tls.CurveID{tls.CurveP256},
+	}
+
+	conn, err := tls.Dial("tcp", ln.Addr().String(), clientCfg)
+	require.NoError(t, err, "TLS 1.2 P-256-only client must be able to connect")
+	defer conn.Close()
+
+	state := <-done
+	assert.Equal(t, uint16(tls.VersionTLS12), state.Version, "should negotiate TLS 1.2")
 }
 
 func TestFormatFingerprint(t *testing.T) {

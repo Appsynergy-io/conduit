@@ -159,6 +159,7 @@ func (s *Server) buildRouter() chi.Router {
 	// Public routes (no auth)
 	r.Get("/health", s.handleHealth)
 	r.Get("/install.sh", s.handleInstallScript)
+	r.Get("/install.ps1", s.handleInstallScriptPS1)
 
 	// Public binary download (outside RequireJSON — serves binary files)
 	r.Get("/api/v1/download/agent", s.handleDownloadAgent)

@@ -150,14 +150,14 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | Agent heartbeat and connection status | ✅ done | CWP, EventBus |
 | Dashboard shows transport type per agent (QUIC vs WebSocket) | ✅ done | EventBus |
 | Linux amd64 + arm64 agent builds | ✅ done | Agent |
-| Windows amd64 agent build | 🟡 in-progress | Agent |
+| Windows amd64 agent build | ✅ done | Agent |
 | macOS arm64 agent build + launchd service | ✅ done | Agent |
 | Agent auto-update with rollback (signed binary push) | ❌ spec-only | Agent, Binary Signing |
 | Full host visibility per agent: CPU, memory, disk, network, services, ports | 🟡 in-progress | CWP, Dashboard |
 | Agent metrics collection (CPU, RAM, disk, load, uptime — `AGENT_INFO` frames) | ✅ done | CWP |
 | Universal resource labelling system for surgical targeting | ✅ done | DB |
 | Agent installed as system service (systemd / launchd / Windows) via `conduit join` | ✅ done | Agent |
-| Agent binary hosting + install script (one-line curl install) | ✅ done | Server |
+| Agent binary hosting + install scripts (curl one-liner + PowerShell) | ✅ done | Server |
 | Dashboard join token management (create, revoke, install command generator) | ✅ done | Frontend, Auth |
 
 ### Shell & Terminal
@@ -187,7 +187,7 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 |---------|--------|--------------|
 | CLI binary (`conduit`) — agent daemon, join, uninstall, token, shell subcommands | ✅ done | Auth, CWP |
 | CLI runs as full TUI (bubbletea) when no arguments given | ✅ done | CLI |
-| CLI-only mode on personal devices (zero daemons, zero listeners) | ❌ spec-only | CLI |
+| CLI-only mode on personal devices (zero daemons, zero listeners) | ✅ done | CLI |
 | CLI shell — `conduit shell <agent>` direct shell without TUI | ✅ done | CLI, CWP |
 | CLI exec commands — bulk exec from terminal | ❌ spec-only | CLI, Bulk Exec |
 | CLI group, user, audit management commands | ✅ done | CLI, Auth |
