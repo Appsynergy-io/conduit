@@ -27,7 +27,7 @@ func apiClient(profile string) (*http.Client, string, error) {
 		httpClient.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
-				MinVersion:         tls.VersionTLS13,
+				MinVersion:         tls.VersionTLS12,
 			},
 		}
 	}

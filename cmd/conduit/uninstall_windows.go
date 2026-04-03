@@ -2,8 +2,20 @@
 
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os/exec"
+)
 
 func uninstallService() error {
-	return fmt.Errorf("automatic service uninstall is not yet supported on Windows")
+	// Stop the service (ignore error — may not be running)
+	exec.Command("sc.exe", "stop", serviceName).Run()
+
+	// Delete the service
+	out, err := exec.Command("sc.exe", "delete", serviceName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("removing service: %s: %w", string(out), err)
+	}
+
+	return nil
 }
