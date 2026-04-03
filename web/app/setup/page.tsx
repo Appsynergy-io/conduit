@@ -56,6 +56,7 @@ export default function SetupPage() {
   const [passkeyRegistered, setPasskeyRegistered] = useState(false)
   const [passkeySkipped, setPasskeySkipped] = useState(false)
   const [webauthnAvailable, setWebauthnAvailable] = useState(false)
+  const [passwordAuth, setPasswordAuth] = useState(false)
 
   const configForm = useForm<ConfigureFormValues>({
     resolver: standardSchemaResolver(configureSchema),
@@ -72,6 +73,10 @@ export default function SetupPage() {
     setWebauthnAvailable(
       typeof window !== "undefined" && !!window.PublicKeyCredential
     )
+    fetch("/api/v1/auth/config")
+      .then((r) => r.json())
+      .then((d) => setPasswordAuth(d.passwordAuth === true))
+      .catch(() => {})
   }, [])
 
   async function onConfigureSubmit(values: ConfigureFormValues) {
@@ -93,16 +98,14 @@ export default function SetupPage() {
         return
       }
 
-      // Auto-login with the admin email and setup token
-      const loginRes = await fetch("/api/v1/auth/password/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: values.adminEmail, password: setupToken }),
-      })
-
-      if (!loginRes.ok) {
-        await finalizeSetup()
-        return
+      // Configure endpoint sets the auth cookie directly — no separate login needed.
+      // In dev mode, also try password login for backward compatibility.
+      if (setupToken) {
+        await fetch("/api/v1/auth/password/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: values.adminEmail, password: setupToken }),
+        }).catch(() => {})
       }
 
       setStep("passkey")
@@ -293,14 +296,16 @@ export default function SetupPage() {
               {loading ? "Registering passkey..." : "Register Passkey"}
             </Button>
 
-            <Button
-              variant="outline"
-              className="w-full"
-              disabled={loading}
-              onClick={handleSkipPasskey}
-            >
-              Skip for now
-            </Button>
+            {passwordAuth && (
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={loading}
+                onClick={handleSkipPasskey}
+              >
+                Skip for now
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>

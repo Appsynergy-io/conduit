@@ -39,7 +39,7 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
 
 const loginSchema = z.object({
   email: z.string().min(1, "Email is required").email("Enter a valid email address"),
-  password: z.string().min(1, "Password is required"),
+  password: z.string(),
 })
 
 type LoginFormValues = z.infer<typeof loginSchema>
@@ -51,6 +51,7 @@ function LoginContent() {
   const [error, setError] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [webauthnAvailable, setWebauthnAvailable] = useState(false)
+  const [passwordAuth, setPasswordAuth] = useState(false)
   const [deviceCode, setDeviceCode] = useState<string | null>(null)
   const [deviceAuthorizing, setDeviceAuthorizing] = useState(false)
   const [deviceAuthorized, setDeviceAuthorized] = useState(false)
@@ -102,6 +103,10 @@ function LoginContent() {
     setWebauthnAvailable(
       typeof window !== "undefined" && !!window.PublicKeyCredential
     )
+    fetch("/api/v1/auth/config")
+      .then((r) => r.json())
+      .then((d) => setPasswordAuth(d.passwordAuth === true))
+      .catch(() => {})
   }, [])
 
   async function handlePasskeyLogin() {
@@ -332,44 +337,48 @@ function LoginContent() {
                 </Button>
               )}
 
-              <div className="flex items-center gap-3">
-                <Separator className="flex-1" />
-                <span className="text-xs text-muted-foreground">or</span>
-                <Separator className="flex-1" />
-              </div>
+              {passwordAuth && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <Separator className="flex-1" />
+                    <span className="text-xs text-muted-foreground">or</span>
+                    <Separator className="flex-1" />
+                  </div>
 
-              <form onSubmit={form.handleSubmit(onPasswordSubmit)} className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Password</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="password"
-                          autoComplete="current-password"
-                          placeholder="Setup token"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  className="w-full"
-                  disabled={form.formState.isSubmitting || passkeyLoading}
-                >
-                  {form.formState.isSubmitting ? "Signing in..." : "Sign in with password"}
-                </Button>
-              </form>
+                  <form onSubmit={form.handleSubmit(onPasswordSubmit)} className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Password</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              autoComplete="current-password"
+                              placeholder="Setup token"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      className="w-full"
+                      disabled={form.formState.isSubmitting || passkeyLoading}
+                    >
+                      {form.formState.isSubmitting ? "Signing in..." : "Sign in with password"}
+                    </Button>
+                  </form>
 
-              <p className="text-center text-xs text-muted-foreground">
-                Dev mode: use your admin email and setup token as the password.
-              </p>
+                  <p className="text-center text-xs text-muted-foreground">
+                    Dev mode: use your admin email and setup token as the password.
+                  </p>
+                </>
+              )}
             </div>
           </Form>
         </CardContent>

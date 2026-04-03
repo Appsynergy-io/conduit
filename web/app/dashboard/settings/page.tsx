@@ -143,6 +143,22 @@ type CITokenFormValues = z.infer<typeof ciTokenSchema>
 // Component
 // ---------------------------------------------------------------------------
 
+function base64urlToBuffer(base64url: string): ArrayBuffer {
+  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/")
+  const pad = base64.length % 4 === 0 ? "" : "=".repeat(4 - (base64.length % 4))
+  const binary = atob(base64 + pad)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes.buffer
+}
+
+function bufferToBase64url(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ""
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+}
+
 export default function SettingsPage() {
   const { userId, roles, isAuthenticated } = useAuth()
   const isAdmin = roles?.some((r: string) =>
@@ -167,6 +183,7 @@ export default function SettingsPage() {
   const [copiedToken, setCopiedToken] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaved, setProfileSaved] = useState(false)
+  const [registeringPasskey, setRegisteringPasskey] = useState(false)
 
   // Forms
   const profileForm = useForm<ProfileFormValues>({
@@ -279,6 +296,60 @@ export default function SettingsPage() {
     setDeletePasskeyId(null)
     fetchPasskeys()
     fetchProfile()
+  }
+
+  async function registerPasskey() {
+    setRegisteringPasskey(true)
+    try {
+      const beginRes = await fetch("/api/v1/auth/webauthn/register/begin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+      if (!beginRes.ok) return
+
+      const options = await beginRes.json()
+      const publicKeyOptions: PublicKeyCredentialCreationOptions = {
+        ...options.publicKey,
+        challenge: base64urlToBuffer(options.publicKey.challenge),
+        user: {
+          ...options.publicKey.user,
+          id: base64urlToBuffer(options.publicKey.user.id),
+        },
+      }
+      if (options.publicKey.excludeCredentials) {
+        publicKeyOptions.excludeCredentials = options.publicKey.excludeCredentials.map(
+          (cred: { id: string; type: string; transports?: string[] }) => ({
+            ...cred,
+            id: base64urlToBuffer(cred.id),
+          }),
+        )
+      }
+
+      const credential = (await navigator.credentials.create({
+        publicKey: publicKeyOptions,
+      })) as PublicKeyCredential | null
+      if (!credential) return
+
+      const attestation = credential.response as AuthenticatorAttestationResponse
+      await fetch("/api/v1/auth/webauthn/register/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: credential.id,
+          rawId: bufferToBase64url(credential.rawId),
+          type: credential.type,
+          response: {
+            attestationObject: bufferToBase64url(attestation.attestationObject),
+            clientDataJSON: bufferToBase64url(attestation.clientDataJSON),
+          },
+        }),
+      })
+
+      fetchPasskeys()
+      fetchProfile()
+    } finally {
+      setRegisteringPasskey(false)
+    }
   }
 
   async function createCIToken(values: CITokenFormValues) {
@@ -444,6 +515,10 @@ export default function SettingsPage() {
               <Fingerprint className="h-5 w-5 text-muted-foreground" />
               <CardTitle>Passkeys</CardTitle>
             </div>
+            <Button size="sm" onClick={registerPasskey} disabled={registeringPasskey}>
+              <Plus className="mr-1 h-4 w-4" />
+              {registeringPasskey ? "Registering..." : "Add passkey"}
+            </Button>
           </div>
           <CardDescription>
             FIDO2/WebAuthn credentials for passwordless authentication.
