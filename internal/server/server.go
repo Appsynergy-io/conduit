@@ -225,6 +225,7 @@ func (s *Server) buildRouter() chi.Router {
 			r.Delete("/auth/webauthn/credentials/{credentialId}", s.handleDeletePasskey)
 
 			// Recovery codes (authenticated — user generates their own codes)
+			r.Get("/auth/recovery/count", s.handleRecoveryCodeCount)
 			r.Post("/auth/recovery/generate", s.handleGenerateRecoveryCodes)
 
 			// CI tokens (NIST IA-5 — machine-to-machine auth)
@@ -349,6 +350,25 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start webhook delivery workers
 	s.webhooks.Start(ctx)
+
+	// Background session cleanup — delete expired sessions every hour
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				count, err := s.db.DeleteExpiredSessions(ctx)
+				if err != nil {
+					s.logger.ErrorContext(ctx, "session cleanup failed", "error", err)
+				} else if count > 0 {
+					s.logger.InfoContext(ctx, "cleaned up expired sessions", "count", count)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	go func() {
 		if err := s.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
