@@ -184,6 +184,7 @@ export default function SettingsPage() {
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaved, setProfileSaved] = useState(false)
   const [registeringPasskey, setRegisteringPasskey] = useState(false)
+  const [recoveryCodeCount, setRecoveryCodeCount] = useState<number | null>(null)
 
   // Forms
   const profileForm = useForm<ProfileFormValues>({
@@ -254,12 +255,24 @@ export default function SettingsPage() {
     }
   }, [])
 
+  const fetchRecoveryCodeCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/auth/recovery/count")
+      if (res.ok) {
+        const data = await res.json()
+        setRecoveryCodeCount(data.count ?? 0)
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   useEffect(() => {
     if (!isAuthenticated) return
-    Promise.all([fetchProfile(), fetchSessions(), fetchPasskeys(), fetchCITokens()]).finally(() =>
+    Promise.all([fetchProfile(), fetchSessions(), fetchPasskeys(), fetchCITokens(), fetchRecoveryCodeCount()]).finally(() =>
       setLoading(false),
     )
-  }, [isAuthenticated, fetchProfile, fetchSessions, fetchPasskeys, fetchCITokens])
+  }, [isAuthenticated, fetchProfile, fetchSessions, fetchPasskeys, fetchCITokens, fetchRecoveryCodeCount])
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -384,6 +397,7 @@ export default function SettingsPage() {
     if (res.ok) {
       const data = await res.json()
       setRecoveryCodes(data.codes ?? [])
+      setRecoveryCodeCount(data.codes?.length ?? 0)
       setShowRecoveryCodes(true)
     }
   }
@@ -596,6 +610,19 @@ export default function SettingsPage() {
             Regenerating replaces all existing codes.
           </CardDescription>
         </CardHeader>
+        <CardContent>
+          {recoveryCodeCount === null ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : recoveryCodeCount === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No recovery codes generated. Click Regenerate to create backup codes.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {recoveryCodeCount} unused recovery code{recoveryCodeCount !== 1 ? "s" : ""} remaining.
+            </p>
+          )}
+        </CardContent>
       </Card>
 
       {/* ── Active Sessions ──────────────────────────────────────── */}

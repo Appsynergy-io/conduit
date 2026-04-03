@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -90,17 +91,10 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create session
-	sessionID := uuid.NewString()
-	session := &db.Session{
-		ID:        sessionID,
-		TenantID:  user.TenantID,
-		UserID:    user.ID,
-		Type:      "web",
-		SourceIP:  strPtr(r.RemoteAddr),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
-	}
-	if err := s.db.CreateSession(ctx, session); err != nil {
+	// Reuse existing web session from same browser, or create a new one
+	ua := r.UserAgent()
+	sessionID, err := s.findOrCreateSession(ctx, user.ID, user.TenantID, "web", r.RemoteAddr, ua)
+	if err != nil {
 		apierror.Internal(w, r, err)
 		return
 	}
@@ -222,6 +216,43 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	clearAuthCookie(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// findOrCreateSession looks for an existing non-expired session with matching
+// user, type, user-agent, AND source IP. If found, it refreshes the session's
+// expiry. A different IP always creates a new session for security visibility —
+// the user can spot unauthorized access from unfamiliar IPs in Active Sessions.
+// (NIST AC-3, AU-2: every distinct origin is a distinct session for audit.)
+func (s *Server) findOrCreateSession(ctx context.Context, userID, tenantID, sessType, remoteAddr, userAgent string) (string, error) {
+	// Try to find an existing session from the same browser + IP
+	existing, err := s.db.FindActiveSession(ctx, userID, sessType, userAgent, remoteAddr)
+	if err != nil {
+		return "", err
+	}
+
+	if existing != nil {
+		// Refresh the existing session's expiry (same device, same network)
+		if err := s.db.RefreshSession(ctx, existing.ID); err != nil {
+			return "", err
+		}
+		return existing.ID, nil
+	}
+
+	// Create a new session — new device, new network, or first login
+	sessionID := uuid.NewString()
+	session := &db.Session{
+		ID:        sessionID,
+		TenantID:  tenantID,
+		UserID:    userID,
+		Type:      sessType,
+		SourceIP:  strPtr(remoteAddr),
+		UserAgent: strPtr(userAgent),
+		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
+	}
+	if err := s.db.CreateSession(ctx, session); err != nil {
+		return "", err
+	}
+	return sessionID, nil
 }
 
 // auditLoginFailure logs a failed login attempt (NIST AC-7, AU-2).
