@@ -79,6 +79,26 @@ func (s *Server) handleGenerateRecoveryCodes(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// handleRecoveryCodeCount returns how many unused recovery codes the user has.
+// GET /api/v1/auth/recovery/count
+func (s *Server) handleRecoveryCodeCount(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromCtx(r.Context())
+	if claims == nil {
+		apierror.Unauthorized(w, r, "Authentication required.", nil)
+		return
+	}
+
+	count, err := s.db.CountUnusedRecoveryCodes(r.Context(), claims.Subject)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count": count,
+	})
+}
+
 // recoveryVerifyRequest is the request body for POST /api/v1/auth/recovery/verify.
 type recoveryVerifyRequest struct {
 	Email string `json:"email"`
