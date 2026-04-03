@@ -173,6 +173,7 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | Pin mode — indefinite sessions for monitoring long-running tasks | ✅ done | SessionManager |
 | Session detach/attach with ring buffer output replay | ✅ done | SessionManager |
 | Pop-out terminal windows (standalone, minimal chrome) | ✅ done | Frontend, Shell |
+| Multi-user session sharing — watch, take control, presence | ❌ spec-only | SessionManager, RBAC, Frontend |
 
 ### File Management
 
