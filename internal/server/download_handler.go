@@ -141,8 +141,9 @@ func generateInstallScript(baseURL string, devMode bool) string {
 	}
 
 	return `#!/bin/sh
-# Conduit Agent Installer
-# Usage: curl ` + curlFlag + ` ` + baseURL + `/install.sh | sh -s -- <join-token>
+# Conduit Installer
+# Install CLI only:  curl ` + curlFlag + ` ` + baseURL + `/install.sh | sh
+# Install + join:    curl ` + curlFlag + ` ` + baseURL + `/install.sh | sh -s -- <join-token>
 set -e
 
 CONDUIT_URL="` + baseURL + `"
@@ -156,11 +157,6 @@ for arg in "$@"; do
     *) TOKEN="$arg" ;;
   esac
 done
-
-if [ -z "$TOKEN" ]; then
-  echo "Usage: curl -sSL ${CONDUIT_URL}/install.sh | sh -s -- [--dev-insecure] <join-token>"
-  exit 1
-fi
 
 # --- Detect OS ---
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -185,7 +181,7 @@ DOWNLOAD_URL="${CONDUIT_URL}/api/v1/download/agent?os=${OS}&arch=${ARCH}"
 INSTALL_DIR="/usr/local/bin"
 BINARY="${INSTALL_DIR}/conduit"
 
-echo "Downloading conduit agent from ${DOWNLOAD_URL}..."
+echo "Downloading conduit from ${DOWNLOAD_URL}..."
 
 CURL_OPTS="-sSL -f"
 if [ -n "$DEV_INSECURE" ]; then
@@ -208,15 +204,148 @@ fi
 chmod +x "$BINARY"
 echo "Installed conduit to ${BINARY}"
 
-# --- Join server ---
-echo "Joining server..."
-if [ -n "$DEV_INSECURE" ]; then
-  "$BINARY" join "$CONDUIT_URL" "$TOKEN" --dev-insecure
+# --- Join server (only if token provided) ---
+if [ -n "$TOKEN" ]; then
+  echo "Joining server..."
+  if [ -n "$DEV_INSECURE" ]; then
+    "$BINARY" join "$CONDUIT_URL" "$TOKEN" --dev-insecure
+  else
+    "$BINARY" join "$CONDUIT_URL" "$TOKEN"
+  fi
+  echo "Done. Agent installed and connected."
 else
-  "$BINARY" join "$CONDUIT_URL" "$TOKEN"
+  echo "Done. Run 'conduit login --server ${CONDUIT_URL}' to authenticate."
 fi
+`
+}
 
-echo "Done. Agent installed and connected."
+// handleInstallScriptPS1 serves a PowerShell script that downloads the agent
+// binary and runs `conduit join` on Windows.
+// GET /install.ps1
+// Public endpoint — used in PowerShell one-liners.
+func (s *Server) handleInstallScriptPS1(w http.ResponseWriter, r *http.Request) {
+	baseURL := s.serverBaseURL(r)
+	devMode := s.cfg.Server.Mode == "dev"
+
+	script := generateInstallScriptPS1(baseURL, devMode)
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(script))
+}
+
+// generateInstallScriptPS1 returns a PowerShell install script for Windows.
+func generateInstallScriptPS1(baseURL string, devMode bool) string {
+	devInsecureDefault := "$DevInsecure = $false"
+	tlsSkip := ""
+	if devMode {
+		devInsecureDefault = "$DevInsecure = $true"
+		tlsSkip = `
+# Dev mode: skip TLS certificate validation for self-signed certs
+if (-not ([System.Management.Automation.PSTypeName]'TrustAll').Type) {
+    Add-Type @"
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class TrustAll {
+    public static void Enable() {
+        ServicePointManager.ServerCertificateValidationCallback =
+            delegate { return true; };
+    }
+}
+"@
+}
+[TrustAll]::Enable()
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13 -bor [Net.SecurityProtocolType]::Tls12`
+	}
+
+	return `# Conduit Installer for Windows
+# Note: Run as Administrator for system-wide install (Program Files + PATH)
+# Install CLI only:  irm ` + baseURL + `/install.ps1 | iex; Install-Conduit
+# Install + join:    irm ` + baseURL + `/install.ps1 | iex; Install-Conduit -Token "<join-token>"
+$ErrorActionPreference = "Stop"
+
+$ConduitURL = "` + baseURL + `"
+` + devInsecureDefault + `
+` + tlsSkip + `
+
+function Install-Conduit {
+    param(
+        [string]$Token,
+
+        [string]$InstallDir = "$env:ProgramFiles\Conduit",
+
+        [switch]$Force
+    )
+
+    # Detect architecture
+    $Arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else {
+        Write-Error "Unsupported architecture: 32-bit Windows is not supported."
+        return
+    }
+    # Check for ARM64
+    if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { $Arch = "arm64" }
+
+    Write-Host "Detected: windows/$Arch" -ForegroundColor Cyan
+
+    # Create install directory
+    if (-not (Test-Path $InstallDir)) {
+        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    }
+
+    $BinaryPath = Join-Path $InstallDir "conduit.exe"
+
+    # Check for existing installation
+    if ((Test-Path $BinaryPath) -and -not $Force) {
+        Write-Host "Existing installation found at $BinaryPath" -ForegroundColor Yellow
+        Write-Host "Use -Force to overwrite." -ForegroundColor Yellow
+        return
+    }
+
+    # Download binary
+    $DownloadURL = "$ConduitURL/api/v1/download/agent?os=windows&arch=$Arch"
+    Write-Host "Downloading conduit from $DownloadURL..." -ForegroundColor Cyan
+
+    try {
+        Invoke-WebRequest -Uri $DownloadURL -OutFile $BinaryPath -UseBasicParsing
+    } catch {
+        Write-Error "Download failed: $_"
+        return
+    }
+
+    Write-Host "Installed conduit to $BinaryPath" -ForegroundColor Green
+
+    # Add to PATH if not already there
+    $MachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    if ($MachinePath -notlike "*$InstallDir*") {
+        [Environment]::SetEnvironmentVariable("Path", "$MachinePath;$InstallDir", "Machine")
+        $env:Path = "$env:Path;$InstallDir"
+        Write-Host "Added $InstallDir to system PATH" -ForegroundColor Green
+    }
+
+    # Join server (only if token provided)
+    if ($Token) {
+        Write-Host "Joining server..." -ForegroundColor Cyan
+        $JoinArgs = @("join", $ConduitURL, $Token)
+        if ($DevInsecure) { $JoinArgs += "--dev-insecure" }
+
+        & $BinaryPath @JoinArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Join failed with exit code $LASTEXITCODE"
+            return
+        }
+        Write-Host "Done. Agent installed and connected." -ForegroundColor Green
+    } else {
+        Write-Host "Done. Run 'conduit login --server $ConduitURL' to authenticate." -ForegroundColor Green
+    }
+}
+
+Write-Host ""
+Write-Host "Conduit Installer loaded." -ForegroundColor Green
+Write-Host "  CLI only:      Install-Conduit" -ForegroundColor Cyan
+Write-Host "  CLI + agent:   Install-Conduit -Token '<your-join-token>'" -ForegroundColor Cyan
+Write-Host ""
 `
 }
 
@@ -253,8 +382,9 @@ func (s *Server) handleListAvailableBinaries(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"platforms":      platforms,
-		"installScript":  s.serverBaseURL(r) + "/install.sh",
-		"devMode":        s.cfg.Server.Mode == "dev",
+		"platforms":         platforms,
+		"installScript":    s.serverBaseURL(r) + "/install.sh",
+		"installScriptPS1": s.serverBaseURL(r) + "/install.ps1",
+		"devMode":          s.cfg.Server.Mode == "dev",
 	})
 }
