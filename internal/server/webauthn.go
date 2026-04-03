@@ -148,6 +148,8 @@ func (s *Server) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *http.Req
 		AlgorithmWarning:  algWarning,
 		AuthenticatorType: authenticatorType,
 		SignCount:         credential.Authenticator.SignCount,
+		BackupEligible:    credential.Flags.BackupEligible,
+		BackupState:       credential.Flags.BackupState,
 	}
 
 	if err := s.db.CreatePasskey(ctx, passkey); err != nil {
@@ -535,6 +537,7 @@ func buildWebAuthnUser(user *db.User, passkeys []db.Passkey) *auth.WebAuthnUser 
 	for _, p := range passkeys {
 		credentials = append(credentials, auth.PasskeyToCredential(
 			p.CredentialID, p.PublicKey, p.SignCount, p.AuthenticatorType,
+			p.BackupEligible, p.BackupState,
 		))
 	}
 

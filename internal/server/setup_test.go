@@ -312,8 +312,13 @@ func TestSetupPasskey_ProductionMode(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	// Production mode: passkey not implemented yet → 501
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	// Production mode: setup token validates and completes setup
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	// Verify setup is now complete
+	complete, err := database.IsSetupComplete(ctx)
+	require.NoError(t, err)
+	assert.True(t, complete)
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,8 @@ type Passkey struct {
 	AlgorithmWarning  *string
 	AuthenticatorType string
 	SignCount         uint32
+	BackupEligible    bool
+	BackupState       bool
 	DisplayName       *string
 	CreatedAt         string
 	LastUsedAt        *string
@@ -31,11 +33,13 @@ func (d *DB) CreatePasskey(ctx context.Context, p *Passkey) error {
 		INSERT INTO passkeys (
 			id, tenant_id, user_id, credential_id, public_key,
 			algorithm, algorithm_warning, authenticator_type,
-			sign_count, display_name, created_at, last_used_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sign_count, backup_eligible, backup_state,
+			display_name, created_at, last_used_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.TenantID, p.UserID, p.CredentialID, p.PublicKey,
 		p.Algorithm, p.AlgorithmWarning, p.AuthenticatorType,
-		p.SignCount, p.DisplayName, p.CreatedAt, p.LastUsedAt,
+		p.SignCount, p.BackupEligible, p.BackupState,
+		p.DisplayName, p.CreatedAt, p.LastUsedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting passkey: %w", err)
@@ -48,7 +52,8 @@ func (d *DB) GetPasskeysByUserID(ctx context.Context, userID string) ([]Passkey,
 	rows, err := d.conn.QueryContext(ctx, `
 		SELECT id, tenant_id, user_id, credential_id, public_key,
 		       algorithm, algorithm_warning, authenticator_type,
-		       sign_count, display_name, created_at, last_used_at
+		       sign_count, backup_eligible, backup_state,
+		       display_name, created_at, last_used_at
 		FROM passkeys WHERE user_id = ?
 		ORDER BY created_at`, userID,
 	)
@@ -63,7 +68,8 @@ func (d *DB) GetPasskeysByUserID(ctx context.Context, userID string) ([]Passkey,
 		if err := rows.Scan(
 			&p.ID, &p.TenantID, &p.UserID, &p.CredentialID, &p.PublicKey,
 			&p.Algorithm, &p.AlgorithmWarning, &p.AuthenticatorType,
-			&p.SignCount, &p.DisplayName, &p.CreatedAt, &p.LastUsedAt,
+			&p.SignCount, &p.BackupEligible, &p.BackupState,
+			&p.DisplayName, &p.CreatedAt, &p.LastUsedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning passkey: %w", err)
 		}
@@ -78,12 +84,14 @@ func (d *DB) GetPasskeyByCredentialID(ctx context.Context, credentialID []byte) 
 	err := d.conn.QueryRowContext(ctx, `
 		SELECT id, tenant_id, user_id, credential_id, public_key,
 		       algorithm, algorithm_warning, authenticator_type,
-		       sign_count, display_name, created_at, last_used_at
+		       sign_count, backup_eligible, backup_state,
+		       display_name, created_at, last_used_at
 		FROM passkeys WHERE credential_id = ?`, credentialID,
 	).Scan(
 		&p.ID, &p.TenantID, &p.UserID, &p.CredentialID, &p.PublicKey,
 		&p.Algorithm, &p.AlgorithmWarning, &p.AuthenticatorType,
-		&p.SignCount, &p.DisplayName, &p.CreatedAt, &p.LastUsedAt,
+		&p.SignCount, &p.BackupEligible, &p.BackupState,
+		&p.DisplayName, &p.CreatedAt, &p.LastUsedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying passkey by credential id: %w", err)
@@ -133,12 +141,14 @@ func (d *DB) GetPasskeyByID(ctx context.Context, id string) (*Passkey, error) {
 	err := d.conn.QueryRowContext(ctx, `
 		SELECT id, tenant_id, user_id, credential_id, public_key,
 		       algorithm, algorithm_warning, authenticator_type,
-		       sign_count, display_name, created_at, last_used_at
+		       sign_count, backup_eligible, backup_state,
+		       display_name, created_at, last_used_at
 		FROM passkeys WHERE id = ?`, id,
 	).Scan(
 		&p.ID, &p.TenantID, &p.UserID, &p.CredentialID, &p.PublicKey,
 		&p.Algorithm, &p.AlgorithmWarning, &p.AuthenticatorType,
-		&p.SignCount, &p.DisplayName, &p.CreatedAt, &p.LastUsedAt,
+		&p.SignCount, &p.BackupEligible, &p.BackupState,
+		&p.DisplayName, &p.CreatedAt, &p.LastUsedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying passkey by id: %w", err)

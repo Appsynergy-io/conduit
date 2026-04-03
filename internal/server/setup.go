@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -191,6 +192,47 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get enabled services for JWT claims
+	services, err := s.db.ListServices(ctx, tenantID)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+	var serviceSlugs []string
+	for _, svc := range services {
+		if svc.EnabledAt != "" {
+			serviceSlugs = append(serviceSlugs, svc.Slug)
+		}
+	}
+
+	// Create session so the admin can register a passkey immediately
+	sessionID := uuid.NewString()
+	session := &db.Session{
+		ID:        sessionID,
+		TenantID:  tenantID,
+		UserID:    userID,
+		Type:      "web",
+		SourceIP:  strPtr(r.RemoteAddr),
+		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
+	}
+	if err := s.db.CreateSession(ctx, session); err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	// Issue JWT so the browser can call WebAuthn register endpoints (NIST IA-2)
+	accessToken, err := s.jwtMgr.IssueAccessToken(
+		userID, tenantID, sessionID,
+		[]string{"platform_owner"}, serviceSlugs,
+	)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	// Set httpOnly cookie (NIST SC-23, OWASP V3)
+	setAuthCookie(w, accessToken, 900)
+
 	// Audit log
 	s.db.InsertAuditLog(ctx, &db.AuditEntry{
 		ID:        uuid.NewString(),
@@ -223,8 +265,11 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSetupPasskey is a stub for passkey registration during setup.
-// POST /api/v1/setup/passkey — requires WebAuthn integration (Phase 6).
+// handleSetupPasskey finalizes setup after passkey registration (or skip in dev).
+// POST /api/v1/setup/passkey
+// The setup token authenticates this request (not JWT) — this is called before
+// normal auth is fully established. Passkey registration itself uses the JWT
+// issued by handleSetupConfigure via the standard WebAuthn endpoints.
 func (s *Server) handleSetupPasskey(w http.ResponseWriter, r *http.Request) {
 	complete, err := s.db.IsSetupComplete(r.Context())
 	if err != nil {
@@ -236,42 +281,40 @@ func (s *Server) handleSetupPasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement WebAuthn credential registration
-	// For now, in dev mode, we can complete setup without a passkey
-	if s.cfg.Server.Mode == "dev" {
-		var req struct {
-			SetupToken string `json:"setupToken"`
-		}
-		if err := decodeJSONStrict(r, &req); err != nil {
-			apierror.BadRequest(w, r, "Invalid request body.", err)
-			return
-		}
-
-		if !verifySetupToken(req.SetupToken) {
-			apierror.Unauthorized(w, r, "Invalid setup token.", nil)
-			return
-		}
-
-		ctx := r.Context()
-		if err := s.db.CompleteSetup(ctx); err != nil {
-			apierror.Internal(w, r, err)
-			return
-		}
-
-		// In dev mode, don't delete the setup token (kept for password auth)
-		slog.InfoContext(ctx, "setup completed (dev mode, passkey skipped)")
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":  "setup_complete",
-			"message": "Setup complete (dev mode). Passkey registration skipped.",
-		})
+	var req struct {
+		SetupToken string `json:"setupToken"`
+	}
+	if err := decodeJSONStrict(r, &req); err != nil {
+		apierror.BadRequest(w, r, "Invalid request body.", err)
 		return
 	}
 
-	apierror.Write(w, r, http.StatusNotImplemented, "Not Implemented",
-		"Passkey registration requires WebAuthn integration.", nil)
+	if !verifySetupToken(req.SetupToken) {
+		apierror.Unauthorized(w, r, "Invalid setup token.", nil)
+		return
+	}
+
+	ctx := r.Context()
+	if err := s.db.CompleteSetup(ctx); err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	if s.cfg.Server.Mode == "dev" {
+		// Dev mode: keep setup token for password auth
+		slog.InfoContext(ctx, "setup completed (dev mode)")
+	} else {
+		// Production: clear setup token from memory (NIST IA-5, single-use)
+		setupToken = ""
+		slog.InfoContext(ctx, "setup completed")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":  "setup_complete",
+		"message": "Setup complete.",
+	})
 }
 
 // hashSetupToken computes SHA-256 hash of the setup token.
