@@ -1,6 +1,6 @@
 "use client"
 
-import { Check, Copy, KeyRound, Plus, Trash2 } from "lucide-react"
+import { Check, Copy, Download, KeyRound, Plus, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
@@ -140,6 +140,7 @@ export default function TokensPage() {
   const [createdToken, setCreatedToken] = useState<string | null>(null)
   const [platforms, setPlatforms] = useState<Platform[]>([])
   const [installScriptURL, setInstallScriptURL] = useState("")
+  const [installScriptPS1URL, setInstallScriptPS1URL] = useState("")
   const [isDevMode, setIsDevMode] = useState(false)
   const [selectedOS, setSelectedOS] = useState<SelectedOS>("linux")
   const [revokeTarget, setRevokeTarget] = useState<JoinToken | null>(null)
@@ -180,6 +181,7 @@ export default function TokensPage() {
         const data = await res.json()
         setPlatforms(data.platforms ?? [])
         setInstallScriptURL(data.installScript ?? "")
+        setInstallScriptPS1URL(data.installScriptPS1 ?? "")
         setIsDevMode(data.devMode === true)
       }
     } catch {
@@ -246,32 +248,40 @@ export default function TokensPage() {
   // Install command helpers
   // ---------------------------------------------------------------------------
 
-  const getInstallCommand = (os: SelectedOS): string => {
-    if (!createdToken) return ""
+  const getBaseURL = (): string => {
+    if (installScriptURL) return installScriptURL.replace("/install.sh", "")
+    return window.location.origin
+  }
 
+  const getInstallCommand = (os: SelectedOS, token?: string | null): string => {
     const curlFlag = isDevMode ? "-sSLk" : "-sSL"
     const devFlag = isDevMode ? " --dev-insecure" : ""
+    const baseURL = getBaseURL()
 
-    if (installScriptURL) {
-      return `curl ${curlFlag} ${installScriptURL} | sh -s --${devFlag} ${createdToken}`
+    if (os === "windows") {
+      const ps1URL = installScriptPS1URL || `${baseURL}/install.ps1`
+      const tokenPart = token ? ` -Token "${token}"` : ""
+      if (isDevMode) {
+        return `Add-Type 'using System.Net;using System.Net.Security;public class S{public static void E(){ServicePointManager.ServerCertificateValidationCallback=delegate{return true;};}}';[S]::E();[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;irm ${ps1URL}|iex;Install-Conduit${tokenPart}`
+      }
+      return `irm ${ps1URL} | iex; Install-Conduit${tokenPart}`
     }
 
-    const baseURL = window.location.origin
-    const binary = os === "windows" ? "conduit.exe" : "conduit"
-    return [
-      `curl ${curlFlag} -o ${binary} "${baseURL}/api/v1/download/agent?os=${os}&arch=amd64"`,
-      os !== "windows" ? `chmod +x ${binary}` : "",
-      `${os === "windows" ? ".\\" : "./"}${binary} join ${baseURL} ${createdToken}${devFlag}`,
-    ]
-      .filter(Boolean)
-      .join(" && ")
+    const scriptURL = installScriptURL || `${baseURL}/install.sh`
+    if (token) {
+      return `curl ${curlFlag} ${scriptURL} | sh -s --${devFlag} ${token}`
+    }
+    return `curl ${curlFlag} ${scriptURL} | sh`
   }
 
   const getManualJoinCommand = (): string => {
     if (!createdToken) return ""
-    const baseURL = installScriptURL ? installScriptURL.replace("/install.sh", "") : window.location.origin
     const devFlag = isDevMode ? " --dev-insecure" : ""
-    return `conduit join ${baseURL} ${createdToken}${devFlag}`
+    return `conduit join ${getBaseURL()} ${createdToken}${devFlag}`
+  }
+
+  const getCLIOnlyInstallCommand = (os: SelectedOS): string => {
+    return getInstallCommand(os)
   }
 
   const tokenStatus = (t: JoinToken): { label: string; variant: "default" | "secondary" | "destructive" } => {
@@ -297,10 +307,16 @@ export default function TokensPage() {
             Generate tokens to enroll new machines as agents.
           </p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Token
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setCreatedToken(null); setShowInstall(true) }}>
+            <Download className="mr-2 h-4 w-4" />
+            Install CLI
+          </Button>
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create Token
+          </Button>
+        </div>
       </div>
 
       {/* Token list */}
@@ -522,9 +538,11 @@ export default function TokensPage() {
       >
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Install Agent</DialogTitle>
+            <DialogTitle>{createdToken ? "Install Agent" : "Install CLI"}</DialogTitle>
             <DialogDescription>
-              Copy the command below to install and register the agent on your machine.
+              {createdToken
+                ? "Copy the command below to install and register the agent on your machine."
+                : "Copy the command below to install the Conduit CLI for remote management."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 overflow-y-auto py-2">
@@ -554,37 +572,71 @@ export default function TokensPage() {
               )}
             </div>
 
-            {/* One-liner install */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">One-line install</CardTitle>
-                <CardDescription className="text-xs">
-                  Downloads the agent binary and joins this server automatically.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <CodeBlock text={getInstallCommand(selectedOS)} />
-              </CardContent>
-            </Card>
+            {createdToken ? (
+              <>
+                {/* One-liner install + join */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">One-line install</CardTitle>
+                    <CardDescription className="text-xs">
+                      Downloads the binary and joins this server automatically.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CodeBlock text={getInstallCommand(selectedOS, createdToken)} />
+                  </CardContent>
+                </Card>
 
-            {/* Manual join (if binary already installed) */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Already have the binary?</CardTitle>
-                <CardDescription className="text-xs">
-                  If the conduit binary is already installed, just run this:
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <CodeBlock text={getManualJoinCommand()} />
-              </CardContent>
-            </Card>
+                {/* Manual join (if binary already installed) */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Already have the binary?</CardTitle>
+                    <CardDescription className="text-xs">
+                      If the conduit binary is already installed, just run this:
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CodeBlock text={getManualJoinCommand()} />
+                  </CardContent>
+                </Card>
 
-            {/* Raw token (for reference) */}
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Raw token (shown once)</Label>
-              <CodeBlock text={createdToken ?? ""} />
-            </div>
+                {/* Raw token (for reference) */}
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Raw token (shown once)</Label>
+                  <CodeBlock text={createdToken} />
+                </div>
+              </>
+            ) : (
+              <>
+                {/* CLI-only install */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Install CLI</CardTitle>
+                    <CardDescription className="text-xs">
+                      {selectedOS === "windows"
+                        ? "Run in PowerShell as Administrator:"
+                        : "Run in your terminal:"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CodeBlock text={getCLIOnlyInstallCommand(selectedOS)} />
+                  </CardContent>
+                </Card>
+
+                {/* Post-install login */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Then authenticate</CardTitle>
+                    <CardDescription className="text-xs">
+                      After installing, log in to start managing agents:
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CodeBlock text={`conduit login --server ${getBaseURL()}${isDevMode ? " --dev-insecure" : ""}`} />
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button

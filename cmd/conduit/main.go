@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -87,11 +86,20 @@ func runTUI() error {
 			return nil
 		}
 
-		fmt.Printf("Connecting to %s...\r\n", result.AgentName)
-		if err := tui.RunShell(client, result.AgentID); err != nil {
+		if result.SessionID != "" {
+			fmt.Printf("Resuming session on %s...\r\n", result.AgentName)
+		} else {
+			fmt.Printf("Connecting to %s...\r\n", result.AgentName)
+		}
+		shellResult, err := tui.RunShell(client, result.AgentID, result.SessionID)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "\r\nShell error: %v\r\n", err)
 		}
-		fmt.Printf("\r\nSession ended. Press Enter to continue...")
+		if shellResult != nil && shellResult.Detached {
+			fmt.Printf("\r\nSession %s detached. Press Enter to continue...", shellResult.SessionID)
+		} else {
+			fmt.Printf("\r\nSession ended. Press Enter to continue...")
+		}
 		bufio.NewReader(os.Stdin).ReadByte()
 	}
 }
@@ -112,7 +120,7 @@ func agentCmd() *cobra.Command {
 				Level: slog.LevelInfo,
 			}))
 
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer cancel()
 
 			a := agent.New(cfg, logger)
@@ -174,7 +182,7 @@ func joinCmd() *cobra.Command {
 				httpClient.Transport = &http.Transport{
 					TLSClientConfig: &tls.Config{
 						InsecureSkipVerify: true,
-						MinVersion:         tls.VersionTLS13,
+						MinVersion:         tls.VersionTLS12,
 					},
 				}
 			}
@@ -362,7 +370,8 @@ func shellCmd() *cobra.Command {
 				return fmt.Errorf("agent %q not found", target)
 			}
 
-			return tui.RunShell(client, agentID)
+			_, err = tui.RunShell(client, agentID, "")
+			return err
 		},
 	}
 }

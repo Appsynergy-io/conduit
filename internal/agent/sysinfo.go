@@ -20,6 +20,8 @@ func collectSysInfo() *protocol.AgentInfoPayload {
 		collectLinuxInfo(info)
 	case "darwin":
 		collectDarwinInfo(info)
+	case "windows":
+		collectWindowsInfo(info)
 	}
 
 	return info

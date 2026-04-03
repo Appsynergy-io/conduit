@@ -36,7 +36,7 @@ Once approved, a CLI token is stored locally for future commands.`,
 				httpClient.Transport = &http.Transport{
 					TLSClientConfig: &tls.Config{
 						InsecureSkipVerify: true,
-						MinVersion:         tls.VersionTLS13,
+						MinVersion:         tls.VersionTLS12,
 					},
 				}
 			}
