@@ -40,20 +40,22 @@ func TestWebAuthnUser_EmptyCredentials(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPasskeyToCredential_Platform(t *testing.T) {
-	cred := PasskeyToCredential([]byte("cid"), []byte("pk"), 5, "platform")
+	cred := PasskeyToCredential([]byte("cid"), []byte("pk"), 5, "platform", true, false)
 	assert.Equal(t, []byte("cid"), cred.ID)
 	assert.Equal(t, []byte("pk"), cred.PublicKey)
 	assert.Equal(t, uint32(5), cred.Authenticator.SignCount)
 	assert.Equal(t, protocol.Platform, cred.Authenticator.Attachment)
+	assert.True(t, cred.Flags.BackupEligible)
+	assert.False(t, cred.Flags.BackupState)
 }
 
 func TestPasskeyToCredential_CrossPlatform(t *testing.T) {
-	cred := PasskeyToCredential([]byte("cid"), []byte("pk"), 0, "cross-platform")
+	cred := PasskeyToCredential([]byte("cid"), []byte("pk"), 0, "cross-platform", false, false)
 	assert.Equal(t, protocol.CrossPlatform, cred.Authenticator.Attachment)
 }
 
 func TestPasskeyToCredential_UnknownType(t *testing.T) {
-	cred := PasskeyToCredential([]byte("cid"), []byte("pk"), 0, "unknown")
+	cred := PasskeyToCredential([]byte("cid"), []byte("pk"), 0, "unknown", false, false)
 	assert.Equal(t, protocol.AuthenticatorAttachment(""), cred.Authenticator.Attachment)
 }
 
