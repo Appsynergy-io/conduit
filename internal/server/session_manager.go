@@ -366,40 +366,68 @@ func (sm *SessionManager) onSessionExit(ls *LiveSession) {
 }
 
 // AttachClient connects a browser/CLI WebSocket to a live session.
-// mode is "controller" or "watcher". Replays ring buffer, then bridges I/O.
-// Returns when the client disconnects or the session ends.
-func (sm *SessionManager) AttachClient(ctx context.Context, ls *LiveSession, conn *websocket.Conn, userID, mode string) error {
+// requestedMode is "controller" or "watcher". If requestedMode is
+// "controller" but another client already holds control, the newcomer is
+// silently attached as a watcher — they must send a take_control message
+// to claim control explicitly (NIST AC-3, AC-6: no implicit takeover on
+// page load). Replays ring buffer, then bridges I/O. Returns the effective
+// role granted to the client. Blocks until the client disconnects or the
+// session ends.
+func (sm *SessionManager) AttachClient(ctx context.Context, ls *LiveSession, conn *websocket.Conn, userID, requestedMode string) (string, error) {
 	client := &SessionClient{
 		ID:       uuid.NewString(),
 		UserID:   userID,
 		Conn:     conn,
-		Role:     mode,
 		JoinedAt: time.Now(),
 		Done:     make(chan struct{}),
 	}
 
 	ls.mu.Lock()
-	// If connecting as controller, demote any existing controller to watcher
-	if mode == roleController && ls.controller != nil {
-		prevController := ls.controller
-		prevController.Role = roleWatcher
-		// Notify the demoted controller
-		demoteMsg, _ := json.Marshal(map[string]interface{}{
-			"type": "control_transferred",
-			"to":   userID,
-		})
-		writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = prevController.Conn.Write(writeCtx, websocket.MessageText, demoteMsg)
-		writeCancel()
+	// Determine effective role. A newcomer only gets control when the seat
+	// is empty — otherwise they join as a watcher and must explicitly
+	// request control via a take_control message.
+	effectiveRole := requestedMode
+	if requestedMode == roleController && ls.controller != nil {
+		effectiveRole = roleWatcher
 	}
+	client.Role = effectiveRole
 
 	ls.clients[client.ID] = client
-	if mode == roleController {
+	if effectiveRole == roleController {
 		ls.controller = client
 	}
 	ls.detachedAt = nil
 	watcherCount := sm.countWatchersLocked(ls)
 	ls.mu.Unlock()
+
+	// Send the initial session message with the client's effective role so
+	// the UI knows whether to enable input and whether to show the
+	// "Take Control" button.
+	sessionMsg, _ := json.Marshal(map[string]interface{}{
+		"type":      "session",
+		"sessionId": ls.ID,
+		"role":      effectiveRole,
+	})
+	writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
+	if err := conn.Write(writeCtx, websocket.MessageText, sessionMsg); err != nil {
+		writeCancel()
+		sm.detachClient(ctx, ls, client)
+		return effectiveRole, fmt.Errorf("sending session info: %w", err)
+	}
+	writeCancel()
+
+	// Record client connection for audit (NIST AU-2)
+	clientRecord := &db.ShellSessionClient{
+		ID:          client.ID,
+		TenantID:    ls.TenantID,
+		SessionID:   ls.ID,
+		UserID:      userID,
+		Role:        effectiveRole,
+		ConnectedAt: db.Now(),
+	}
+	if err := sm.db.InsertShellSessionClient(ctx, clientRecord); err != nil {
+		sm.logger.Error("failed to record client connection", "session_id", ls.ID, "client_id", client.ID, "error", err)
+	}
 
 	// Update DB status
 	if err := sm.db.UpdateShellSessionStatus(ctx, ls.ID, "active"); err != nil {
@@ -413,15 +441,15 @@ func (sm *SessionManager) AttachClient(ctx context.Context, ls *LiveSession, con
 		if err := conn.Write(writeCtx, websocket.MessageBinary, replay); err != nil {
 			writeCancel()
 			sm.detachClient(ctx, ls, client)
-			return fmt.Errorf("replaying ring buffer: %w", err)
+			return effectiveRole, fmt.Errorf("replaying ring buffer: %w", err)
 		}
 		writeCancel()
 	}
 
-	sm.logger.Info("client attached", "session_id", ls.ID, "client_id", client.ID, "role", mode, "user_id", userID)
+	sm.logger.Info("client attached", "session_id", ls.ID, "client_id", client.ID, "role", effectiveRole, "user_id", userID)
 
 	// Notify other clients about the new connection
-	if mode == roleWatcher {
+	if effectiveRole == roleWatcher {
 		sm.broadcastJSON(ctx, ls, client.ID, map[string]interface{}{
 			"type":         "watcher_joined",
 			"userId":       userID,
@@ -506,7 +534,11 @@ func (sm *SessionManager) AttachClient(ctx context.Context, ls *LiveSession, con
 
 	// Client disconnected — detach this client (session stays alive if others remain)
 	sm.detachClient(ctx, ls, client)
-	return nil
+
+	// Record disconnection in audit trail (NIST AU-2)
+	_ = sm.db.DisconnectShellSessionClient(context.Background(), client.ID)
+
+	return effectiveRole, nil
 }
 
 // handleClientJSON processes JSON control messages from a connected client.

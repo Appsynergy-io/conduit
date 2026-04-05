@@ -1,22 +1,16 @@
 "use client"
 
-import { AlertCircle, ExternalLink, Pin, PinOff, WifiOff, X } from "lucide-react"
+import { AlertCircle, ExternalLink, Hand, Pin, PinOff, WifiOff, X } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Suspense, useCallback, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { SessionTabs } from "@/components/session-tabs"
-import { TerminalView } from "@/components/terminal"
+import { type TerminalHandle, TerminalView } from "@/components/terminal"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/hooks/use-auth"
-import { useEffect } from "react"
 
 interface Agent {
   id: string
@@ -38,15 +32,21 @@ function TerminalContent() {
   const agentId = searchParams.get("agent")
   const attachSessionId = searchParams.get("session")
   const modeParam = searchParams.get("mode")
-  const connectMode = modeParam === "watch" ? "watch" : "control" as "control" | "watch"
+  const connectMode = modeParam === "watch" ? "watch" : ("control" as "control" | "watch")
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(attachSessionId)
   // Track the resolved session ID (existing session to reuse, or null to create new)
-  const [resolvedSessionId, setResolvedSessionId] = useState<string | undefined>(attachSessionId ?? undefined)
+  const [resolvedSessionId, setResolvedSessionId] = useState<string | undefined>(
+    attachSessionId ?? undefined,
+  )
   const [newSessionCounter, setNewSessionCounter] = useState(0)
   const resolvedRef = useRef(false)
+  const terminalRef = useRef<TerminalHandle>(null)
+  const [role, setRole] = useState<"controller" | "watcher">(
+    connectMode === "watch" ? "watcher" : "controller",
+  )
 
   useEffect(() => {
     if (!agentId) {
@@ -83,10 +83,9 @@ function TerminalContent() {
         if (!attachSessionId && !resolvedRef.current) {
           resolvedRef.current = true
           try {
-            const sessRes = await fetch(
-              `/api/v1/agents/${encodeURIComponent(id)}/shell/sessions`,
-              { signal: controller.signal },
-            )
+            const sessRes = await fetch(`/api/v1/agents/${encodeURIComponent(id)}/shell/sessions`, {
+              signal: controller.signal,
+            })
             if (sessRes.ok) {
               const sessData = await sessRes.json()
               const sessions: ShellSession[] = sessData.data ?? []
@@ -122,12 +121,15 @@ function TerminalContent() {
     (session: { id: string; agentId: string }) => {
       setResolvedSessionId(session.id)
       setCurrentSessionId(session.id)
+      // Optimistically assume controller until the server's session
+      // message corrects us (e.g. to watcher if someone else holds control).
+      setRole(connectMode === "watch" ? "watcher" : "controller")
       // Update URL to reflect the attached session
       router.replace(
         `/dashboard/terminal?agent=${encodeURIComponent(session.agentId)}&session=${encodeURIComponent(session.id)}`,
       )
     },
-    [router],
+    [connectMode, router],
   )
 
   const [pinned, setPinned] = useState(false)
@@ -141,6 +143,7 @@ function TerminalContent() {
     setResolvedSessionId(undefined)
     setCurrentSessionId(null)
     setPinned(false)
+    setRole("controller")
     setNewSessionCounter((c) => c + 1)
     router.replace(`/dashboard/terminal?agent=${encodeURIComponent(agentId!)}`)
   }, [agentId, router])
@@ -165,8 +168,16 @@ function TerminalContent() {
   const popOut = useCallback(() => {
     if (!currentSessionId) return
     const url = `/terminal/pop?session=${encodeURIComponent(currentSessionId)}`
-    window.open(url, `conduit-terminal-${currentSessionId}`, "width=900,height=600,menubar=no,toolbar=no")
+    window.open(
+      url,
+      `conduit-terminal-${currentSessionId}`,
+      "width=900,height=600,menubar=no,toolbar=no",
+    )
   }, [currentSessionId])
+
+  const handleTakeControl = useCallback(() => {
+    terminalRef.current?.takeControl()
+  }, [])
 
   if (!agentId) {
     return (
@@ -232,6 +243,18 @@ function TerminalContent() {
           />
         </div>
         <div className="flex items-center gap-0.5 shrink-0 pl-2">
+          {role === "watcher" && currentSessionId && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTakeControl}
+              aria-label="Take control"
+              className="mr-1 h-7 px-2 text-xs sm:mr-2 sm:px-3"
+            >
+              <Hand className="h-3.5 w-3.5 sm:mr-1.5" />
+              <span className="hidden sm:inline">Take Control</span>
+            </Button>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -239,13 +262,15 @@ function TerminalContent() {
                   variant="ghost"
                   size="icon"
                   onClick={togglePin}
-                  disabled={!currentSessionId}
+                  disabled={!currentSessionId || role === "watcher"}
                   className="h-7 w-7 text-muted-foreground hover:text-foreground"
                 >
                   {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{pinned ? "Unpin (allow idle timeout)" : "Pin (keep alive forever)"}</TooltipContent>
+              <TooltipContent>
+                {pinned ? "Unpin (allow idle timeout)" : "Pin (keep alive forever)"}
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -277,12 +302,14 @@ function TerminalContent() {
       <div className="flex-1 overflow-hidden">
         <TerminalView
           key={resolvedSessionId ?? `new-${newSessionCounter}`}
+          ref={terminalRef}
           agentId={agentId}
           agentHostname={agent?.displayName ?? agent?.hostname}
           sessionId={resolvedSessionId}
           mode={connectMode}
           onClose={handleClose}
           onSessionReady={handleSessionReady}
+          onRoleChange={setRole}
           hideHeader
         />
       </div>
