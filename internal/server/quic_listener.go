@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -71,7 +72,9 @@ func (s *Server) startQUICServices(ctx context.Context) error {
 	quicTLS.NextProtos = []string{"conduit-cwp-v1", "h3"}
 
 	ln, err := transport.ListenEarly(quicTLS, &quic.Config{
-		Allow0RTT: false,
+		Allow0RTT:       false,
+		KeepAlivePeriod: 15 * time.Second,
+		MaxIdleTimeout:  60 * time.Second,
 	})
 	if err != nil {
 		udpConn.Close()
