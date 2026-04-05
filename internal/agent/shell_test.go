@@ -170,8 +170,8 @@ func TestDefaultShell(t *testing.T) {
 	assert.Contains(t, shell, "/")
 }
 
-func TestBuildShellEnv(t *testing.T) {
-	env := buildShellEnv()
+func TestBuildLoginEnv(t *testing.T) {
+	env := buildLoginEnv()
 	assert.NotEmpty(t, env)
 
 	hasTerm := false

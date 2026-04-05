@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync/atomic"
 
 	"github.com/coder/websocket"
 	"golang.org/x/term"
@@ -44,20 +45,25 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	// For new sessions, read the initial session message from the server.
-	// The server sends {"type":"session","sessionId":"..."} as the first message.
+	// Read the initial session message from the server.
+	// The server sends {"type":"session","sessionId":"...","role":"..."} as the first message.
 	sessionID := resumeSessionID
-	if sessionID == "" {
-		readCtx, readCancel := context.WithTimeout(ctx, 5*1e9) // 5s
-		_, initData, readErr := conn.Read(readCtx)
-		readCancel()
-		if readErr == nil {
-			var msg struct {
-				Type      string `json:"type"`
-				SessionID string `json:"sessionId"`
-			}
-			if json.Unmarshal(initData, &msg) == nil && msg.Type == "session" {
+	role := "controller"
+	readCtx, readCancel := context.WithTimeout(ctx, 5*1e9) // 5s
+	msgType, initData, readErr := conn.Read(readCtx)
+	readCancel()
+	if readErr == nil && msgType == websocket.MessageText {
+		var msg struct {
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
+			Role      string `json:"role"`
+		}
+		if json.Unmarshal(initData, &msg) == nil && msg.Type == "session" {
+			if msg.SessionID != "" {
 				sessionID = msg.SessionID
+			}
+			if msg.Role != "" {
+				role = msg.Role
 			}
 		}
 	}
@@ -68,11 +74,19 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 	}
 	defer term.Restore(fd, oldState)
 
-	// Show subtle connect hint
-	fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Conduit ── Ctrl+] for commands ──\x1b[0m\r\n\r\n")
+	// Show subtle connect hint with role info
+	if role == "watcher" {
+		fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Conduit ── \x1b[34mWatching\x1b[90m ── Ctrl+] for commands ──\x1b[0m\r\n\r\n")
+	} else {
+		fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Conduit ── Ctrl+] for commands ──\x1b[0m\r\n\r\n")
+	}
 
 	done := make(chan struct{}, 1)
 	detached := false
+	var watching atomic.Bool
+	if role == "watcher" {
+		watching.Store(true)
+	}
 
 	// stdin → WebSocket (with Ctrl+] command prefix)
 	go func() {
@@ -90,7 +104,11 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 				b := buf[i]
 				if b == ctrlRightBracket {
 					// Show command bar and wait for action
-					fmt.Fprintf(os.Stdout, "\r\n\x1b[7m Conduit \x1b[0m \x1b[97md\x1b[90m detach  \x1b[97mp\x1b[90m pin  \x1b[97mEsc\x1b[90m cancel\x1b[0m ")
+					if watching.Load() {
+						fmt.Fprintf(os.Stdout, "\r\n\x1b[7m Conduit \x1b[0m \x1b[97md\x1b[90m detach  \x1b[97mt\x1b[90m take control  \x1b[97mEsc\x1b[90m cancel\x1b[0m ")
+					} else {
+						fmt.Fprintf(os.Stdout, "\r\n\x1b[7m Conduit \x1b[0m \x1b[97md\x1b[90m detach  \x1b[97mp\x1b[90m pin  \x1b[97mEsc\x1b[90m cancel\x1b[0m ")
+					}
 
 					// Read next byte for command
 					cmdBuf := make([]byte, 1)
@@ -106,15 +124,31 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 						cancel()
 						return
 					case 'p':
-						fmt.Fprintf(os.Stdout, "\r\n")
-						go togglePin(client, agentID, sessionID)
+						if !watching.Load() {
+							fmt.Fprintf(os.Stdout, "\r\n")
+							go togglePin(client, agentID, sessionID)
+						} else {
+							fmt.Fprintf(os.Stdout, "\r\x1b[2K")
+						}
+					case 't':
+						if watching.Load() {
+							fmt.Fprintf(os.Stdout, "\r\n")
+							// Send take_control over the existing WebSocket
+							takeMsg, _ := json.Marshal(map[string]string{"type": "take_control"})
+							conn.Write(ctx, websocket.MessageText, takeMsg)
+						} else {
+							fmt.Fprintf(os.Stdout, "\r\x1b[2K")
+						}
 					default:
 						// Esc or any other key — cancel, clear the bar
 						fmt.Fprintf(os.Stdout, "\r\x1b[2K")
 					}
 					continue
 				}
-				out = append(out, b)
+				// Watchers: silently discard typed input
+				if !watching.Load() {
+					out = append(out, b)
+				}
 			}
 
 			if len(out) > 0 {
@@ -126,7 +160,7 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 		}
 	}()
 
-	// WebSocket → stdout
+	// WebSocket → stdout (distinguishes binary PTY data from JSON control messages)
 	go func() {
 		defer func() {
 			select {
@@ -135,11 +169,62 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 			}
 		}()
 		for {
-			_, data, err := conn.Read(ctx)
+			msgType, data, err := conn.Read(ctx)
 			if err != nil {
 				return
 			}
-			os.Stdout.Write(data)
+
+			if msgType == websocket.MessageBinary {
+				os.Stdout.Write(data)
+				continue
+			}
+
+			// Text messages are JSON control messages — parse and handle
+			var msg map[string]interface{}
+			if json.Unmarshal(data, &msg) != nil {
+				// Not valid JSON, write as text (shouldn't happen)
+				os.Stdout.Write(data)
+				continue
+			}
+
+			switch msg["type"] {
+			case "session":
+				// Initial session info (already handled above, but may come on reattach)
+				if sid, ok := msg["sessionId"].(string); ok && sid != "" {
+					sessionID = sid
+				}
+				if r, ok := msg["role"].(string); ok {
+					watching.Store(r == "watcher")
+				}
+			case "control_granted":
+				watching.Store(false)
+				fmt.Fprintf(os.Stdout, "\r\n\x1b[92m── You now have control ──\x1b[0m\r\n")
+			case "control_transferred":
+				watching.Store(true)
+				fmt.Fprintf(os.Stdout, "\r\n\x1b[93m── Control transferred to another user ──\x1b[0m\r\n")
+			case "watcher_joined":
+				count := 0
+				if c, ok := msg["watcherCount"].(float64); ok {
+					count = int(c)
+				}
+				fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Watcher joined (%d watching) ──\x1b[0m\r\n", count)
+			case "watcher_left":
+				count := 0
+				if c, ok := msg["watcherCount"].(float64); ok {
+					count = int(c)
+				}
+				fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Watcher left (%d watching) ──\x1b[0m\r\n", count)
+			case "detached":
+				detached = true
+				fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Session detached ──\x1b[0m\r\n")
+				cancel()
+				return
+			case "exit":
+				fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Session ended ──\x1b[0m\r\n")
+				return
+			default:
+				// Unknown control message — ignore silently
+			}
 		}
 	}()
 
