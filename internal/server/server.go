@@ -171,10 +171,12 @@ func (s *Server) buildRouter() chi.Router {
 	r.Get("/api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws", s.handleShellAttach)
 	r.Get("/agent/v1/connect", s.handleAgentConnect)
 
-	// Binary upload endpoint (outside RequireJSON — sends octet-stream)
+	// Binary upload endpoints (outside RequireJSON — send octet-stream)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(s.jwtMgr, s))
+		r.Use(middleware.NoCacheHeaders)
 		r.Use(middleware.RequireService("remote-access"))
+		r.Post("/api/v1/agents/{agentId}/files/upload", s.handleUploadFile)
 		r.Patch("/api/v1/agents/{agentId}/uploads/{uploadId}", s.handleUploadChunk)
 	})
 
@@ -274,7 +276,7 @@ func (s *Server) buildRouter() chi.Router {
 				// Agent file operations
 				r.Get("/agents/{agentId}/files", s.handleListFiles)
 				r.Get("/agents/{agentId}/files/download", s.handleDownloadFile)
-				r.Post("/agents/{agentId}/files/upload", s.handleUploadFile)
+				// POST /files/upload is registered outside this group (sends octet-stream, not JSON)
 				r.Post("/agents/{agentId}/files/delete", s.handleDeleteFile)
 				r.Post("/agents/{agentId}/files/rename", s.handleRenameFile)
 				r.Post("/agents/{agentId}/files/mkdir", s.handleMkdir)
