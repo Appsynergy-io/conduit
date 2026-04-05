@@ -128,38 +128,13 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 		"user_id", claims.Subject,
 	)
 
-	// Send session ID and role to browser
-	sessionMsg, _ := json.Marshal(map[string]string{
-		"type":      "session",
-		"sessionId": ls.ID,
-		"role":      roleController,
-	})
-	writeCtx, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
-	if err := browserConn.Write(writeCtx, websocket.MessageText, sessionMsg); err != nil {
-		writeCancel()
-		s.logger.Error("failed to send session ID to browser", "error", err)
-		return
-	}
-	writeCancel()
-
-	// Record client connection for audit (NIST AU-2)
-	clientRecord := &db.ShellSessionClient{
-		ID:          uuid.NewString(),
-		TenantID:    claims.TenantID,
-		SessionID:   ls.ID,
-		UserID:      claims.Subject,
-		Role:        roleController,
-		ConnectedAt: db.Now(),
-	}
-	_ = s.db.InsertShellSessionClient(r.Context(), clientRecord)
-
-	// Attach as controller — blocks until browser disconnects.
-	if err := s.sessionMgr.AttachClient(r.Context(), ls, browserConn, claims.Subject, roleController); err != nil {
+	// Attach as controller — blocks until browser disconnects. AttachClient
+	// writes the initial session JSON and maintains the shell_session_clients
+	// audit record. For a freshly-created session the effective role is
+	// always controller.
+	if _, err := s.sessionMgr.AttachClient(r.Context(), ls, browserConn, claims.Subject, roleController); err != nil {
 		s.logger.Debug("browser attach ended", "session_id", ls.ID, "error", err)
 	}
-
-	// Record disconnection for audit
-	_ = s.db.DisconnectShellSessionClient(r.Context(), clientRecord.ID)
 
 	// Audit detach
 	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
@@ -224,63 +199,40 @@ func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	// Send session info with role
-	sessionMsg, _ := json.Marshal(map[string]string{
-		"type":      "session",
-		"sessionId": sessionID,
-		"role":      mode,
-	})
-	writeCtx, writeCancel := context.WithTimeout(r.Context(), 5*time.Second)
-	if err := conn.Write(writeCtx, websocket.MessageText, sessionMsg); err != nil {
-		writeCancel()
-		return
-	}
-	writeCancel()
+	s.logger.Info("client attaching to session",
+		"session_id", sessionID,
+		"agent_id", agentID,
+		"user_id", claims.Subject,
+		"requested_mode", mode,
+	)
 
+	// Attach — blocks until client disconnects. AttachClient writes the
+	// initial session JSON with the EFFECTIVE role (which may be "watcher"
+	// if another client already holds control) and maintains the
+	// shell_session_clients audit record.
+	effectiveRole, err := s.sessionMgr.AttachClient(r.Context(), ls, conn, claims.Subject, mode)
+	if err != nil {
+		s.logger.Debug("client attach ended", "session_id", sessionID, "error", err)
+	}
+
+	// Audit the attach using the EFFECTIVE role (NIST AU-2, AU-3)
 	eventType := "shell.attach"
-	if mode == roleWatcher {
+	if effectiveRole == roleWatcher {
 		eventType = "shell.session.watch.start"
 	}
-
-	s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
+	s.db.InsertAuditLog(context.Background(), &db.AuditEntry{
 		ID:        uuid.NewString(),
 		TenantID:  claims.TenantID,
 		EventType: eventType,
 		UserID:    &claims.Subject,
 		AgentID:   &agentID,
 		SourceIP:  strPtr(r.RemoteAddr),
-		Details:   strPtr(fmt.Sprintf(`{"session_id":"%s","mode":"%s"}`, sessionID, mode)),
+		Details:   strPtr(fmt.Sprintf(`{"session_id":"%s","requested_mode":"%s","effective_role":"%s"}`, sessionID, mode, effectiveRole)),
 		Outcome:   "success",
 	})
 
-	// Record client connection for audit (NIST AU-2)
-	clientRecord := &db.ShellSessionClient{
-		ID:          uuid.NewString(),
-		TenantID:    claims.TenantID,
-		SessionID:   sessionID,
-		UserID:      claims.Subject,
-		Role:        mode,
-		ConnectedAt: db.Now(),
-	}
-	_ = s.db.InsertShellSessionClient(r.Context(), clientRecord)
-
-	s.logger.Info("client attaching to session",
-		"session_id", sessionID,
-		"agent_id", agentID,
-		"user_id", claims.Subject,
-		"mode", mode,
-	)
-
-	// Attach — blocks until client disconnects
-	if err := s.sessionMgr.AttachClient(r.Context(), ls, conn, claims.Subject, mode); err != nil {
-		s.logger.Debug("client attach ended", "session_id", sessionID, "error", err)
-	}
-
-	// Record disconnection
-	_ = s.db.DisconnectShellSessionClient(r.Context(), clientRecord.ID)
-
-	if mode == roleWatcher {
-		s.db.InsertAuditLog(r.Context(), &db.AuditEntry{
+	if effectiveRole == roleWatcher {
+		s.db.InsertAuditLog(context.Background(), &db.AuditEntry{
 			ID:        uuid.NewString(),
 			TenantID:  claims.TenantID,
 			EventType: "shell.session.watch.end",
