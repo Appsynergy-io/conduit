@@ -213,7 +213,7 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 		UserID:    userID,
 		Type:      "web",
 		SourceIP:  strPtr(r.RemoteAddr),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
+		ExpiresAt: time.Now().UTC().Add(s.jwtMgr.RefreshTTL()).Format(time.RFC3339),
 	}
 	if err := s.db.CreateSession(ctx, session); err != nil {
 		apierror.Internal(w, r, err)
@@ -230,8 +230,14 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set httpOnly cookie (NIST SC-23, OWASP V3)
-	setAuthCookie(w, accessToken, 900)
+	// Set httpOnly cookies (NIST SC-23, OWASP V3)
+	setAuthCookie(w, accessToken, int(s.jwtMgr.AccessTTL().Seconds()))
+	refreshToken, err := s.jwtMgr.IssueRefreshToken(userID, tenantID, sessionID)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+	setRefreshCookie(w, refreshToken, int(s.jwtMgr.RefreshTTL().Seconds()))
 
 	// Audit log
 	s.db.InsertAuditLog(ctx, &db.AuditEntry{

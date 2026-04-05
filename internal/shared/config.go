@@ -57,7 +57,7 @@ func LoadConfig(path string) (*Config, error) {
 	viper.SetDefault("server.binariesDir", "/var/lib/conduit/binaries")
 	viper.SetDefault("database.path", "conduit.db")
 	viper.SetDefault("auth.jwtAccessTTL", "15m")
-	viper.SetDefault("auth.jwtRefreshTTL", "24h")
+	viper.SetDefault("auth.jwtRefreshTTL", "8h")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
