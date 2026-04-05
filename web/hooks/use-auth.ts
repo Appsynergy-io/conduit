@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { refreshToken } from "@/lib/refresh"
 
 interface AuthState {
   userId: string | null
@@ -27,7 +28,16 @@ export function useAuth() {
 
   const checkSession = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/auth/me")
+      let res = await fetch("/api/v1/auth/me")
+
+      // Access token expired — try silent refresh before giving up.
+      if (res.status === 401) {
+        const refreshed = await refreshToken()
+        if (refreshed) {
+          res = await fetch("/api/v1/auth/me")
+        }
+      }
+
       if (res.ok) {
         const data = await res.json()
         setAuth({

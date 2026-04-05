@@ -141,6 +141,16 @@ func (m *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
+// AccessTTL returns the configured access token TTL.
+func (m *JWTManager) AccessTTL() time.Duration {
+	return m.accessTTL
+}
+
+// RefreshTTL returns the configured refresh token TTL.
+func (m *JWTManager) RefreshTTL() time.Duration {
+	return m.refreshTTL
+}
+
 // PublicKey returns the Ed25519 public key (for external verification).
 func (m *JWTManager) PublicKey() ed25519.PublicKey {
 	return m.publicKey
