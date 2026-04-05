@@ -1,10 +1,11 @@
 "use client"
 
+import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
 import { AlertCircle, CheckCircle2, Fingerprint, Monitor, User } from "lucide-react"
+import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useCallback, useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
-import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
 import { z } from "zod"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -48,7 +49,8 @@ function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { login, isAuthenticated } = useAuth()
-  const savedEmail = typeof window !== "undefined" ? localStorage.getItem("conduit_email") ?? "" : ""
+  const savedEmail =
+    typeof window !== "undefined" ? (localStorage.getItem("conduit_email") ?? "") : ""
 
   const [error, setError] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
@@ -103,9 +105,7 @@ function LoginContent() {
   }, [deviceCode])
 
   useEffect(() => {
-    setWebauthnAvailable(
-      typeof window !== "undefined" && !!window.PublicKeyCredential
-    )
+    setWebauthnAvailable(typeof window !== "undefined" && !!window.PublicKeyCredential)
     fetch("/api/v1/auth/config")
       .then((r) => r.json())
       .then((d) => setPasswordAuth(d.passwordAuth === true))
@@ -146,7 +146,7 @@ function LoginContent() {
           (cred: { id: string; type: string; transports?: string[] }) => ({
             ...cred,
             id: base64urlToBuffer(cred.id),
-          })
+          }),
         )
       }
 
@@ -259,9 +259,7 @@ function LoginContent() {
               <Monitor className="h-6 w-6 text-muted-foreground" />
             </div>
             <CardTitle className="text-xl font-bold">Authorize CLI</CardTitle>
-            <CardDescription>
-              A CLI session is requesting access to your account.
-            </CardDescription>
+            <CardDescription>A CLI session is requesting access to your account.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {error && (
@@ -274,17 +272,16 @@ function LoginContent() {
               <p className="text-xs text-muted-foreground">Confirm this code matches your CLI</p>
               <p className="mt-1 font-mono text-2xl font-bold tracking-widest">{deviceCode}</p>
             </div>
-            <Button
-              className="w-full"
-              onClick={authorizeDevice}
-              disabled={deviceAuthorizing}
-            >
+            <Button className="w-full" onClick={authorizeDevice} disabled={deviceAuthorizing}>
               {deviceAuthorizing ? "Authorizing..." : "Authorize this device"}
             </Button>
             <Button
               variant="outline"
               className="w-full"
-              onClick={() => { setDeviceCode(null); router.push("/dashboard") }}
+              onClick={() => {
+                setDeviceCode(null)
+                router.push("/dashboard")
+              }}
             >
               Cancel
             </Button>
@@ -345,6 +342,13 @@ function LoginContent() {
               >
                 Not you? Use a different account
               </button>
+
+              <Link
+                href="/recovery"
+                className="block w-full text-center text-sm text-muted-foreground hover:text-foreground"
+              >
+                Lost access to your passkey?
+              </Link>
             </div>
           </CardContent>
         </Card>
@@ -443,6 +447,13 @@ function LoginContent() {
                   </p>
                 </>
               )}
+
+              <Link
+                href="/recovery"
+                className="block w-full text-center text-sm text-muted-foreground hover:text-foreground"
+              >
+                Lost access to your passkey?
+              </Link>
             </div>
           </Form>
         </CardContent>

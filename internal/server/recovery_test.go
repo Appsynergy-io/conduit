@@ -39,11 +39,13 @@ func TestGenerateRecoveryCodes_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, codes, 10, "should generate 10 recovery codes")
 
-	// Each code should be xxxx-xxxx format
+	// Each code should be xxxx-xxxx-xxxx-xxxx format (19 chars total).
 	for _, c := range codes {
 		code := c.(string)
-		assert.Len(t, code, 9)
+		assert.Len(t, code, 19)
 		assert.Equal(t, "-", string(code[4]))
+		assert.Equal(t, "-", string(code[9]))
+		assert.Equal(t, "-", string(code[14]))
 	}
 }
 
@@ -153,9 +155,14 @@ func TestVerifyRecoveryCode_Success(t *testing.T) {
 	codes := genResp["codes"].([]interface{})
 	firstCode := codes[0].(string)
 
-	// Verify the code (public endpoint — no JWT needed)
-	body := `{"email": "verify@test.com", "code": "` + firstCode + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(body))
+	// Verify the code (public endpoint — no JWT needed, but captcha required)
+	body, err := json.Marshal(map[string]interface{}{
+		"email":   "verify@test.com",
+		"code":    firstCode,
+		"captcha": solveCaptcha(t, srv, "/auth/recovery/verify"),
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -186,8 +193,13 @@ func TestVerifyRecoveryCode_ScopedToken(t *testing.T) {
 	require.NoError(t, json.NewDecoder(genW.Body).Decode(&genResp))
 	firstCode := genResp["codes"].([]interface{})[0].(string)
 
-	body := `{"email": "scope@test.com", "code": "` + firstCode + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(body))
+	body, err := json.Marshal(map[string]interface{}{
+		"email":   "scope@test.com",
+		"code":    firstCode,
+		"captcha": solveCaptcha(t, srv, "/auth/recovery/verify"),
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -296,16 +308,97 @@ func TestVerifyRecoveryCode_CodeCanOnlyBeUsedOnce(t *testing.T) {
 	require.NoError(t, json.NewDecoder(genW.Body).Decode(&genResp))
 	code := genResp["codes"].([]interface{})[0].(string)
 
-	// First use — should succeed
-	body := `{"email": "once@test.com", "code": "` + code + `"}`
-	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(body))
+	// First use — should succeed (fresh captcha)
+	body1, err := json.Marshal(map[string]interface{}{
+		"email":   "once@test.com",
+		"code":    code,
+		"captcha": solveCaptcha(t, srv, "/auth/recovery/verify"),
+	})
+	require.NoError(t, err)
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(string(body1)))
 	req1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w1, req1)
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	// Second use — should fail (code already consumed)
-	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(body))
+	// Second use — should fail (code already consumed, fresh captcha)
+	body2, err := json.Marshal(map[string]interface{}{
+		"email":   "once@test.com",
+		"code":    code,
+		"captcha": solveCaptcha(t, srv, "/auth/recovery/verify"),
+	})
+	require.NoError(t, err)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(string(body2)))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
+}
+
+func TestVerifyRecoveryCode_RequiresCaptcha(t *testing.T) {
+	srv, _, _ := newTestServerWithDB(t, "dev")
+
+	// No captcha field → 401 (identical error, no enumeration)
+	body := `{"email": "x@test.com", "code": "xxxx-yyyy"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestVerifyRecoveryCode_RejectsForgedCaptcha(t *testing.T) {
+	srv, _, _ := newTestServerWithDB(t, "dev")
+
+	forged := map[string]interface{}{
+		"salt":     strings.Repeat("a", 64),
+		"target":   strings.Repeat("f", 64),
+		"expires":  int64(9999999999),
+		"endpoint": "/auth/recovery/verify",
+		"hmac":     strings.Repeat("0", 64),
+		"nonce":    uint64(1),
+	}
+	body, err := json.Marshal(map[string]interface{}{
+		"email": "x@test.com", "code": "xxxx-yyyy", "captcha": forged,
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestVerifyRecoveryCode_RejectsReplayedCaptcha(t *testing.T) {
+	srv, jwtMgr, database := newTestServerWithDB(t, "dev")
+	tenantID, userID := seedLoginState(t, database, "replay@test.com", "password")
+	token, _ := jwtMgr.IssueAccessToken(userID, tenantID, "sess", []string{"org_member"}, nil)
+
+	// Generate codes so the happy path past captcha can complete
+	genReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/generate", nil)
+	genReq.Header.Set("Content-Type", "application/json")
+	genReq.Header.Set("Authorization", "Bearer "+token)
+	genW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(genW, genReq)
+	require.Equal(t, http.StatusOK, genW.Code)
+	var genResp map[string]interface{}
+	require.NoError(t, json.NewDecoder(genW.Body).Decode(&genResp))
+	code := genResp["codes"].([]interface{})[0].(string)
+
+	// Solve once, submit twice. First OK, second replayed → 401.
+	cap := solveCaptcha(t, srv, "/auth/recovery/verify")
+	body, err := json.Marshal(map[string]interface{}{
+		"email": "replay@test.com", "code": code, "captcha": cap,
+	})
+	require.NoError(t, err)
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(string(body)))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusOK, w1.Code)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/recovery/verify", strings.NewReader(string(body)))
 	req2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w2, req2)

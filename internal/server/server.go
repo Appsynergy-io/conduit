@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/appsynergy-io/conduit/internal/auth"
+	"github.com/appsynergy-io/conduit/internal/captcha"
 	"github.com/appsynergy-io/conduit/internal/db"
 	"github.com/appsynergy-io/conduit/internal/middleware"
 	"github.com/appsynergy-io/conduit/internal/protocol"
@@ -41,6 +43,7 @@ type Server struct {
 	webAuthnSessions *auth.WebAuthnSessionStore
 	authLimiter      *middleware.RateLimiter
 	setupLimiter     *middleware.RateLimiter
+	captchaVerifier  *captcha.Verifier
 	execJobs         map[string]context.CancelFunc
 	execJobsMu       sync.Mutex
 	uploads          *uploadStore
@@ -77,12 +80,26 @@ func New(cfg *shared.Config, database *db.DB, jwtMgr *auth.JWTManager, tlsConfig
 			Interval: 1 * time.Hour,
 			Burst:    10,
 		}),
-		execJobs: make(map[string]context.CancelFunc),
-		uploads:  newUploadStore(),
+		execJobs:        make(map[string]context.CancelFunc),
+		uploads:         newUploadStore(),
+		captchaVerifier: newCaptchaVerifier(),
 	}
 	s.initWebAuthn()
 	s.router = s.buildRouter()
 	return s
+}
+
+// newCaptchaVerifier creates a PoW CAPTCHA verifier with a fresh random
+// HMAC key. Challenges have a 60s TTL, so regenerating the key on each
+// server restart is acceptable — in-flight challenges become invalid and
+// clients retry (~1-3 seconds of extra compute).
+func newCaptchaVerifier() *captcha.Verifier {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		// Cannot proceed without CSPRNG — fail hard (NIST SP 800-131A).
+		panic(fmt.Sprintf("captcha: reading random key: %v", err))
+	}
+	return captcha.NewVerifier(key)
 }
 
 // initWebAuthn configures the WebAuthn relying party.
@@ -197,6 +214,7 @@ func (s *Server) buildRouter() chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RateLimit(s.authLimiter))
 			r.Get("/auth/config", s.handleAuthConfig)
+			r.Get("/auth/captcha/challenge", s.handleCaptchaChallenge)
 			r.Post("/auth/password/login", s.handlePasswordLogin)
 			r.Post("/auth/webauthn/login/begin", s.handleWebAuthnLoginBegin)
 			r.Post("/auth/webauthn/login/finish", s.handleWebAuthnLoginFinish)
