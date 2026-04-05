@@ -65,7 +65,10 @@ func (a *Agent) connectQUIC(ctx context.Context) (protocol.FrameMux, <-chan erro
 		tlsCfg.InsecureSkipVerify = true
 	}
 
-	conn, err := quic.DialAddr(dialCtx, quicAddr, tlsCfg, &quic.Config{})
+	conn, err := quic.DialAddr(dialCtx, quicAddr, tlsCfg, &quic.Config{
+		KeepAlivePeriod: 15 * time.Second,
+		MaxIdleTimeout:  60 * time.Second,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("dialing QUIC %s: %w", quicAddr, err)
 	}
