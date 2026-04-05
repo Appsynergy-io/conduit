@@ -46,13 +46,29 @@ type LiveSession struct {
 	Recorder    *asciicastRecorder
 
 	mu         sync.Mutex
+	cols, rows int                       // current PTY dimensions (set by controller, mirrored to watchers)
 	clients    map[string]*SessionClient // clientID → SessionClient
 	controller *SessionClient            // the one client with write access (nil when detached)
 	detachedAt *time.Time
 	agentCh    <-chan *protocol.Frame
 	connAgent  *ConnectedAgent
 	cancel     context.CancelFunc // cancels the agent→ring goroutine on terminate
-	exitDone   chan struct{}       // closed when onSessionExit completes
+	exitDone   chan struct{}      // closed when onSessionExit completes
+}
+
+// Size returns the current PTY dimensions.
+func (ls *LiveSession) Size() (cols, rows int) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return ls.cols, ls.rows
+}
+
+// SetSize updates the current PTY dimensions.
+func (ls *LiveSession) SetSize(cols, rows int) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	ls.cols = cols
+	ls.rows = rows
 }
 
 // IsDetached returns true if no clients are connected.
@@ -238,6 +254,8 @@ func (sm *SessionManager) CreateSession(
 		IdleTimeout: time.Duration(idleTimeout) * time.Second,
 		Ring:        NewRingBuffer(DefaultRingSize),
 		Recorder:    recorder,
+		cols:        cols,
+		rows:        rows,
 		clients:     make(map[string]*SessionClient),
 		agentCh:     agentCh,
 		connAgent:   connAgent,
@@ -275,21 +293,21 @@ func (sm *SessionManager) agentReadLoop(ctx context.Context, ls *LiveSession) {
 					ls.Recorder.WriteOutput(f.Payload)
 				}
 
-				// Broadcast to all connected clients
+				// Send only to the controller. Non-controllers (standby
+				// clients) have no live view of the PTY — they see a greyed
+				// terminal with a "Take Control" button, and receive the
+				// ring buffer on promotion.
 				ls.mu.Lock()
-				clients := make([]*SessionClient, 0, len(ls.clients))
-				for _, c := range ls.clients {
-					clients = append(clients, c)
-				}
+				ctrl := ls.controller
 				ls.mu.Unlock()
-
-				for _, c := range clients {
-					writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
-					if err := c.Conn.Write(writeCtx, websocket.MessageBinary, f.Payload); err != nil {
-						sm.logger.Debug("client write failed", "session_id", ls.ID, "client_id", c.ID, "error", err)
-					}
-					writeCancel()
+				if ctrl == nil {
+					continue
 				}
+				writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
+				if err := ctrl.Conn.Write(writeCtx, websocket.MessageBinary, f.Payload); err != nil {
+					sm.logger.Debug("controller write failed", "session_id", ls.ID, "client_id", ctrl.ID, "error", err)
+				}
+				writeCancel()
 
 			case protocol.FrameShellExit:
 				sm.logger.Info("shell exited on agent", "session_id", ls.ID)
@@ -397,12 +415,11 @@ func (sm *SessionManager) AttachClient(ctx context.Context, ls *LiveSession, con
 		ls.controller = client
 	}
 	ls.detachedAt = nil
-	watcherCount := sm.countWatchersLocked(ls)
 	ls.mu.Unlock()
 
-	// Send the initial session message with the client's effective role so
-	// the UI knows whether to enable input and whether to show the
-	// "Take Control" button.
+	// Send the initial session message with the client's effective role.
+	// Watchers are standby clients: no PTY data, no dimension mirroring —
+	// just a role indicator. Controllers drive size via fit().
 	sessionMsg, _ := json.Marshal(map[string]interface{}{
 		"type":      "session",
 		"sessionId": ls.ID,
@@ -434,47 +451,33 @@ func (sm *SessionManager) AttachClient(ctx context.Context, ls *LiveSession, con
 		sm.logger.Error("failed to update session status in DB", "session_id", ls.ID, "error", err)
 	}
 
-	// Replay ring buffer contents to bring client up to date
-	replay := ls.Ring.Bytes()
-	if len(replay) > 0 {
-		writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := conn.Write(writeCtx, websocket.MessageBinary, replay); err != nil {
+	// Replay the ring buffer only to the controller. Standby clients see a
+	// greyed terminal and get the replay when they take control.
+	if effectiveRole == roleController {
+		replay := ls.Ring.Bytes()
+		if len(replay) > 0 {
+			writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := conn.Write(writeCtx, websocket.MessageBinary, replay); err != nil {
+				writeCancel()
+				sm.detachClient(ctx, ls, client)
+				return effectiveRole, fmt.Errorf("replaying ring buffer: %w", err)
+			}
 			writeCancel()
-			sm.detachClient(ctx, ls, client)
-			return effectiveRole, fmt.Errorf("replaying ring buffer: %w", err)
 		}
-		writeCancel()
 	}
 
 	sm.logger.Info("client attached", "session_id", ls.ID, "client_id", client.ID, "role", effectiveRole, "user_id", userID)
 
-	// Notify other clients about the new connection
-	if effectiveRole == roleWatcher {
-		sm.broadcastJSON(ctx, ls, client.ID, map[string]interface{}{
-			"type":         "watcher_joined",
-			"userId":       userID,
-			"watcherCount": watcherCount,
-		})
-		sm.eventBus.Publish(ls.TenantID, Event{
-			Channel: "shell",
-			Type:    "shell.session.watcher.joined",
-			Data: map[string]string{
-				"sessionId": ls.ID,
-				"agentId":   ls.AgentID,
-				"userId":    userID,
-			},
-		})
-	} else {
-		sm.eventBus.Publish(ls.TenantID, Event{
-			Channel: "shell",
-			Type:    "shell.session.attached",
-			Data: map[string]string{
-				"sessionId": ls.ID,
-				"agentId":   ls.AgentID,
-				"userId":    userID,
-			},
-		})
-	}
+	sm.eventBus.Publish(ls.TenantID, Event{
+		Channel: "shell",
+		Type:    "shell.session.attached",
+		Data: map[string]string{
+			"sessionId": ls.ID,
+			"agentId":   ls.AgentID,
+			"userId":    userID,
+			"role":      effectiveRole,
+		},
+	})
 
 	// Client → Agent: read from client, forward input if controller
 	go func() {
@@ -506,10 +509,15 @@ func (sm *SessionManager) AttachClient(ctx context.Context, ls *LiveSession, con
 				continue // silently discard watcher input
 			}
 
-			// Check for resize command
-			if f := parseBrowserResize(data, ls.StreamID); f != nil {
-				if err := ls.connAgent.Mux.Send(ctx, f); err != nil {
-					return
+			// Check for resize command. Update tracked dimensions and
+			// forward to the agent PTY. Standby clients don't render
+			// live output, so no broadcast is needed.
+			if cols, rows, ok := parseResizeDims(data); ok {
+				ls.SetSize(cols, rows)
+				if f := parseBrowserResize(data, ls.StreamID); f != nil {
+					if err := ls.connAgent.Mux.Send(ctx, f); err != nil {
+						return
+					}
 				}
 				continue
 			}
@@ -579,7 +587,7 @@ func (sm *SessionManager) TransferControl(ctx context.Context, ls *LiveSession, 
 		return
 	}
 
-	// Demote previous controller to watcher
+	// Demote previous controller to standby
 	var prevUserID string
 	if prevController != nil {
 		prevController.Role = roleWatcher
@@ -589,10 +597,9 @@ func (sm *SessionManager) TransferControl(ctx context.Context, ls *LiveSession, 
 	// Promote new controller
 	newController.Role = roleController
 	ls.controller = newController
-	watcherCount := sm.countWatchersLocked(ls)
 	ls.mu.Unlock()
 
-	// Notify the demoted controller
+	// Notify the demoted controller (goes grey on the client).
 	if prevController != nil {
 		demoteMsg, _ := json.Marshal(map[string]interface{}{
 			"type": "control_transferred",
@@ -603,7 +610,7 @@ func (sm *SessionManager) TransferControl(ctx context.Context, ls *LiveSession, 
 		writeCancel()
 	}
 
-	// Notify the new controller
+	// Notify the new controller.
 	grantMsg, _ := json.Marshal(map[string]string{
 		"type": "control_granted",
 	})
@@ -611,12 +618,15 @@ func (sm *SessionManager) TransferControl(ctx context.Context, ls *LiveSession, 
 	_ = newController.Conn.Write(writeCtx, websocket.MessageText, grantMsg)
 	writeCancel()
 
-	// Broadcast to all other clients
-	sm.broadcastJSON(ctx, ls, "", map[string]interface{}{
-		"type":         "controller_changed",
-		"userId":       newController.UserID,
-		"watcherCount": watcherCount,
-	})
+	// Replay the ring buffer to the new controller so they see recent
+	// session output. (Standby clients don't receive live PTY data, so
+	// their xterm is empty until this point.)
+	replay := ls.Ring.Bytes()
+	if len(replay) > 0 {
+		writeCtx, writeCancel = context.WithTimeout(ctx, 10*time.Second)
+		_ = newController.Conn.Write(writeCtx, websocket.MessageBinary, replay)
+		writeCancel()
+	}
 
 	sm.logger.Info("control transferred",
 		"session_id", ls.ID,
@@ -669,10 +679,9 @@ func (sm *SessionManager) detachClient(ctx context.Context, ls *LiveSession, cli
 		now := time.Now()
 		ls.detachedAt = &now
 	}
-	watcherCount := sm.countWatchersLocked(ls)
 	ls.mu.Unlock()
 
-	// Notify promoted watcher
+	// Notify promoted standby: send control_granted then replay ring buffer.
 	if promoted != nil {
 		grantMsg, _ := json.Marshal(map[string]string{
 			"type": "control_granted",
@@ -681,23 +690,17 @@ func (sm *SessionManager) detachClient(ctx context.Context, ls *LiveSession, cli
 		_ = promoted.Conn.Write(writeCtx, websocket.MessageText, grantMsg)
 		writeCancel()
 
-		sm.logger.Info("watcher auto-promoted to controller",
+		replay := ls.Ring.Bytes()
+		if len(replay) > 0 {
+			writeCtx, writeCancel = context.WithTimeout(ctx, 10*time.Second)
+			_ = promoted.Conn.Write(writeCtx, websocket.MessageBinary, replay)
+			writeCancel()
+		}
+
+		sm.logger.Info("standby auto-promoted to controller",
 			"session_id", ls.ID,
 			"user_id", promoted.UserID,
 		)
-	}
-
-	// Notify remaining clients about the departure
-	if client.Role == roleWatcher || wasController {
-		eventType := "watcher_left"
-		if wasController {
-			eventType = "controller_changed"
-		}
-		sm.broadcastJSON(ctx, ls, "", map[string]interface{}{
-			"type":         eventType,
-			"userId":       client.UserID,
-			"watcherCount": watcherCount,
-		})
 	}
 
 	if allGone {
@@ -720,7 +723,7 @@ func (sm *SessionManager) detachClient(ctx context.Context, ls *LiveSession, cli
 	} else {
 		sm.eventBus.Publish(ls.TenantID, Event{
 			Channel: "shell",
-			Type:    "shell.session.watcher.left",
+			Type:    "shell.session.client.left",
 			Data: map[string]string{
 				"sessionId": ls.ID,
 				"agentId":   ls.AgentID,
@@ -740,40 +743,6 @@ func (ls *LiveSession) GetClientByUserID(userID string) *SessionClient {
 		}
 	}
 	return nil
-}
-
-// broadcastJSON sends a JSON message to all connected clients, optionally excluding one.
-func (sm *SessionManager) broadcastJSON(ctx context.Context, ls *LiveSession, excludeClientID string, msg interface{}) {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-
-	ls.mu.Lock()
-	clients := make([]*SessionClient, 0, len(ls.clients))
-	for _, c := range ls.clients {
-		if c.ID != excludeClientID {
-			clients = append(clients, c)
-		}
-	}
-	ls.mu.Unlock()
-
-	for _, c := range clients {
-		writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = c.Conn.Write(writeCtx, websocket.MessageText, data)
-		writeCancel()
-	}
-}
-
-// countWatchersLocked returns the number of watcher clients. Must be called with ls.mu held.
-func (sm *SessionManager) countWatchersLocked(ls *LiveSession) int {
-	count := 0
-	for _, c := range ls.clients {
-		if c.Role == roleWatcher {
-			count++
-		}
-	}
-	return count
 }
 
 // TerminateSession kills a session: closes the CWP stream, saves recording,

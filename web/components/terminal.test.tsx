@@ -11,6 +11,7 @@ const mockOpen = vi.fn()
 const mockOnData = vi.fn()
 const mockOnBinary = vi.fn()
 const mockOnResize = vi.fn()
+const mockResize = vi.fn()
 
 vi.mock("@xterm/xterm", () => {
   return {
@@ -25,6 +26,7 @@ vi.mock("@xterm/xterm", () => {
       this.onData = mockOnData
       this.onBinary = mockOnBinary
       this.onResize = mockOnResize
+      this.resize = mockResize
     },
   }
 })
@@ -426,5 +428,117 @@ describe("TerminalView — Security", () => {
     expect(parsed.type).toBe("resize")
     // No extra fields
     expect(Object.keys(parsed)).toEqual(["type", "cols", "rows"])
+  })
+
+  it("shows standby overlay when server assigns watcher role", async () => {
+    render(<TerminalView agentId="agent-1" sessionId="s1" />)
+
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances.length).toBe(1)
+    })
+
+    const ws = mockWebSocketInstances[0]
+    await act(async () => {
+      ws.simulateOpen()
+    })
+
+    await act(async () => {
+      ws.simulateMessage(
+        JSON.stringify({ type: "session", sessionId: "s1", role: "watcher" }),
+      )
+    })
+
+    expect(screen.getByTestId("standby-overlay")).toBeInTheDocument()
+    expect(screen.getByText("Standby")).toBeInTheDocument()
+  })
+
+  it("discards typed input while in standby mode", async () => {
+    render(<TerminalView agentId="agent-1" sessionId="s1" />)
+
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances.length).toBe(1)
+    })
+
+    const ws = mockWebSocketInstances[0]
+    await act(async () => {
+      ws.simulateOpen()
+    })
+
+    await act(async () => {
+      ws.simulateMessage(
+        JSON.stringify({ type: "session", sessionId: "s1", role: "watcher" }),
+      )
+    })
+
+    // Server placed us in standby — keystrokes must not be forwarded
+    const onDataCallback = mockOnData.mock.calls[0][0]
+    onDataCallback("ls -la\r")
+    expect(ws.sentMessages.length).toBe(0)
+  })
+
+  it("sends take_control message on standby Take Control click", async () => {
+    render(<TerminalView agentId="agent-1" sessionId="s1" />)
+
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances.length).toBe(1)
+    })
+
+    const ws = mockWebSocketInstances[0]
+    await act(async () => {
+      ws.simulateOpen()
+    })
+
+    await act(async () => {
+      ws.simulateMessage(
+        JSON.stringify({ type: "session", sessionId: "s1", role: "watcher" }),
+      )
+    })
+
+    const takeBtn = screen.getAllByRole("button", { name: /take control/i })[0]
+    await act(async () => {
+      takeBtn.click()
+    })
+
+    expect(ws.sentMessages.length).toBe(1)
+    const sent = new TextDecoder().decode(ws.sentMessages[0] as Uint8Array)
+    expect(JSON.parse(sent)).toEqual({ type: "take_control" })
+  })
+
+  it("removes standby overlay and sends resize on control_granted", async () => {
+    render(<TerminalView agentId="agent-1" sessionId="s1" />)
+
+    await vi.waitFor(() => {
+      expect(mockWebSocketInstances.length).toBe(1)
+    })
+
+    const ws = mockWebSocketInstances[0]
+    await act(async () => {
+      ws.simulateOpen()
+    })
+
+    await act(async () => {
+      ws.simulateMessage(
+        JSON.stringify({ type: "session", sessionId: "s1", role: "watcher" }),
+      )
+    })
+    expect(screen.getByTestId("standby-overlay")).toBeInTheDocument()
+
+    // Clear messages from initial handshake, then promote to controller
+    ws.sentMessages.length = 0
+    await act(async () => {
+      ws.simulateMessage(JSON.stringify({ type: "control_granted" }))
+    })
+
+    expect(screen.queryByTestId("standby-overlay")).not.toBeInTheDocument()
+    // control_granted triggers an explicit resize sync to the PTY
+    const resizeMsg = ws.sentMessages.find((m) => {
+      const s = new TextDecoder().decode(m as Uint8Array)
+      try {
+        return JSON.parse(s).type === "resize"
+      } catch {
+        return false
+      }
+    })
+    expect(resizeMsg).toBeDefined()
   })
 })

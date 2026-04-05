@@ -31,8 +31,6 @@ function TerminalContent() {
   const { isAuthenticated } = useAuth()
   const agentId = searchParams.get("agent")
   const attachSessionId = searchParams.get("session")
-  const modeParam = searchParams.get("mode")
-  const connectMode = modeParam === "watch" ? "watch" : ("control" as "control" | "watch")
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -44,9 +42,7 @@ function TerminalContent() {
   const [newSessionCounter, setNewSessionCounter] = useState(0)
   const resolvedRef = useRef(false)
   const terminalRef = useRef<TerminalHandle>(null)
-  const [role, setRole] = useState<"controller" | "watcher">(
-    connectMode === "watch" ? "watcher" : "controller",
-  )
+  const [role, setRole] = useState<"controller" | "watcher">("controller")
 
   useEffect(() => {
     if (!agentId) {
@@ -122,14 +118,14 @@ function TerminalContent() {
       setResolvedSessionId(session.id)
       setCurrentSessionId(session.id)
       // Optimistically assume controller until the server's session
-      // message corrects us (e.g. to watcher if someone else holds control).
-      setRole(connectMode === "watch" ? "watcher" : "controller")
+      // message corrects us to standby if someone else holds control.
+      setRole("controller")
       // Update URL to reflect the attached session
       router.replace(
         `/dashboard/terminal?agent=${encodeURIComponent(session.agentId)}&session=${encodeURIComponent(session.id)}`,
       )
     },
-    [connectMode, router],
+    [router],
   )
 
   const [pinned, setPinned] = useState(false)
@@ -306,7 +302,6 @@ function TerminalContent() {
           agentId={agentId}
           agentHostname={agent?.displayName ?? agent?.hostname}
           sessionId={resolvedSessionId}
-          mode={connectMode}
           onClose={handleClose}
           onSessionReady={handleSessionReady}
           onRoleChange={setRole}
