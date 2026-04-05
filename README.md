@@ -131,6 +131,8 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | JWT issuance and validation (Ed25519 signed, short-lived) | ✅ done | — |
 | Users + groups + RBAC (platform_owner, org_owner, org_admin, org_member) | ✅ done | DB |
 | Account recovery via one-time recovery codes (Argon2id hashed, single-use) | ✅ done | Auth, Users, Passkeys |
+| Account recovery UI (lost-passkey flow: email + code → new passkey) | ✅ done | Auth, Frontend, PoW CAPTCHA |
+| Self-hosted proof-of-work CAPTCHA (HMAC-SHA256, stdlib only) | ✅ done | — |
 | Admin-assisted account recovery (reset user auth state) | ✅ done | Auth, Users, RBAC |
 | SAML/OIDC SSO (passkeys remain primary) | ❌ spec-only | Auth, Users |
 | CLI browser device flow (passkey → CLI token) | ✅ done | Auth, JWT |

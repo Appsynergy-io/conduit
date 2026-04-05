@@ -316,7 +316,7 @@ Token is a signed JWT: `{jti, type, labels, exp, iss}`. Usage: `conduit join <se
 
 **Setup Wizard:** Server generates CSPRNG setup token → localhost:8080 → collects token + domain + admin info → validates token (constant-time) → ACME cert → creates tenant + admin (platform_owner) + seeds remote-access service → restarts on 443 → admin registers passkey → production: token DELETE'd, dev: token persists → setup permanently deactivated.
 
-**Recovery:** (1) 10 one-time codes (Argon2id hashed), using one returns 5-min JWT scoped to `passkey:register`. (2) Admin reset via `/users/{userId}/recovery/reset`.
+**Recovery:** (1) 10 one-time codes (Argon2id hashed), using one returns 5-min JWT scoped to `passkey:register`. Recovery verify endpoint is gated by a self-hosted proof-of-work CAPTCHA (HMAC-SHA256 challenge, SHA-256 solve, 60s expiry, single-use LRU replay cache, stdlib-only). (2) Admin reset via `/users/{userId}/recovery/reset`.
 
 **CLI Auth:** Browser device flow → scoped CLI token → stored encrypted in `~/.config/conduit/credentials.yaml`.
 

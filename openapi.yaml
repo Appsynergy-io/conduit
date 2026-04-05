@@ -1167,6 +1167,60 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /auth/captcha/challenge:
+    get:
+      operationId: getCaptchaChallenge
+      summary: Issue a proof-of-work CAPTCHA challenge
+      description: |
+        Issues a self-hosted proof-of-work CAPTCHA challenge. The client must
+        find a nonce such that `SHA-256(salt || nonce)` treated as a big-endian
+        integer is less than `target`. Typical solve cost: 1-3 seconds on
+        modern browser hardware, prohibitively expensive at botnet scale.
+
+        Challenges are signed with HMAC-SHA256 using a server-side secret,
+        bound to a single endpoint path, and expire after 60 seconds. The
+        server tracks issued salts in an in-memory LRU cache to prevent
+        replay attacks.
+
+        Zero dependencies, zero external services, zero tracking, zero PII.
+        Uses only stdlib Go (crypto/rand, crypto/hmac, crypto/sha256) and
+        browser-native Web Crypto API (`crypto.subtle.digest`).
+
+        **NIST SC-5:** Denial-of-service protection via asymmetric compute cost.
+        **NIST SI-10:** Input validation — HMAC verifies challenge authenticity.
+      tags: [Auth]
+      security: []
+      x-nist-controls: [SC-5, SI-10]
+      x-owasp: [A04, API4, API6]
+      x-rate-limit:
+        window: 1h
+        max: 1000
+        strategy: ip
+        description: Cheap endpoint, loose rate limit — real throttle is the solve cost
+      parameters:
+        - name: endpoint
+          in: query
+          required: true
+          description: |
+            Target endpoint path the challenge will be bound to (e.g.
+            `/auth/recovery/verify`). HMAC includes this value so solutions
+            cannot be reused across endpoints.
+          schema:
+            type: string
+            maxLength: 100
+            pattern: "^/[a-zA-Z0-9/_-]+$"
+      responses:
+        "200":
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptchaChallenge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
   /auth/recovery/verify:
     post:
       operationId: verifyRecoveryCode
@@ -1184,13 +1238,19 @@ paths:
         (invalid email, wrong code, used code, no codes exist) to prevent
         user enumeration (NIST AC-7).
 
+        Requires a solved proof-of-work CAPTCHA obtained from
+        `GET /auth/captcha/challenge?endpoint=/auth/recovery/verify`.
+        Invalid/expired/replayed CAPTCHAs return 401 with the same generic
+        error as other failure modes.
+
         **NIST IA-2, IA-5, IA-11:** Re-authentication for account recovery.
         **NIST AC-7:** Failed attempt lockout — max 5 attempts per email per hour.
+        **NIST SC-5:** PoW CAPTCHA adds asymmetric compute cost.
         **NIST AU-2:** Audit all recovery verification attempts.
         **x-audit-event:** auth.recovery.verify
       tags: [Auth]
       security: []
-      x-nist-controls: [IA-2, IA-5, IA-11, AC-7, AU-2]
+      x-nist-controls: [IA-2, IA-5, IA-11, AC-7, AU-2, SC-5]
       x-owasp: [A01, A02, A07, API2]
       x-rate-limit:
         window: 1h
@@ -1204,7 +1264,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, recoveryCode]
+              required: [email, recoveryCode, captcha]
               properties:
                 email:
                   type: string
@@ -1215,6 +1275,8 @@ paths:
                   minLength: 16
                   maxLength: 16
                   pattern: "^[a-zA-Z0-9]{16}$"
+                captcha:
+                  $ref: "#/components/schemas/CaptchaSolution"
               additionalProperties: false
       responses:
         "200":
@@ -6005,6 +6067,84 @@ components:
         generatedAt:
           type: string
           format: date-time
+      additionalProperties: false
+
+    CaptchaChallenge:
+      type: object
+      description: |
+        Proof-of-work challenge issued by the server. The client must find a
+        nonce such that SHA-256(salt || nonce) as a big-endian integer is
+        less than `target`. Expires after 60 seconds.
+      required: [salt, target, expires, endpoint, hmac]
+      properties:
+        salt:
+          type: string
+          description: 32-byte random salt, hex-encoded (64 chars). CSPRNG-generated.
+          pattern: "^[0-9a-f]{64}$"
+          minLength: 64
+          maxLength: 64
+        target:
+          type: string
+          description: |
+            Difficulty target — 32-byte big-endian integer, hex-encoded.
+            The client's found nonce must produce a hash less than this.
+            Smaller target = harder puzzle.
+          pattern: "^[0-9a-f]{64}$"
+          minLength: 64
+          maxLength: 64
+        expires:
+          type: integer
+          format: int64
+          description: Unix timestamp (seconds) after which the challenge is invalid.
+        endpoint:
+          type: string
+          description: |
+            Endpoint path this challenge is bound to. Server rejects solutions
+            submitted to a different endpoint.
+          maxLength: 100
+        hmac:
+          type: string
+          description: |
+            HMAC-SHA256 of (salt || target || expires || endpoint) using a
+            server-side secret. Prevents forgery.
+          pattern: "^[0-9a-f]{64}$"
+          minLength: 64
+          maxLength: 64
+      additionalProperties: false
+
+    CaptchaSolution:
+      type: object
+      description: |
+        Solved CAPTCHA challenge. Echoes all challenge fields plus the nonce
+        the client found. Server re-verifies HMAC, expiry, and hash condition.
+      required: [salt, target, expires, endpoint, hmac, nonce]
+      properties:
+        salt:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          minLength: 64
+          maxLength: 64
+        target:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          minLength: 64
+          maxLength: 64
+        expires:
+          type: integer
+          format: int64
+        endpoint:
+          type: string
+          maxLength: 100
+        hmac:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          minLength: 64
+          maxLength: 64
+        nonce:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The number the client found such that SHA-256(salt || nonce) < target.
       additionalProperties: false
 
     RecoveryTokenResponse:
