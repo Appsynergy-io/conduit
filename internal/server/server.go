@@ -222,6 +222,9 @@ func (s *Server) buildRouter() chi.Router {
 			r.Post("/auth/device/begin", s.handleBeginDeviceFlow)
 		})
 
+		// Token refresh — public (access token expired, refresh cookie is proof)
+		r.Post("/auth/refresh", s.handleRefresh)
+
 		// Device flow poll — separate from auth rate limiter because CLI polls every 5s
 		r.Post("/auth/device/poll", s.handlePollDeviceFlow)
 
