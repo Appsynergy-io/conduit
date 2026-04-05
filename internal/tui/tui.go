@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/coder/websocket"
 )
 
 // ── Types ────────────────────────────────────────────────────────
@@ -27,18 +29,21 @@ type Result struct {
 }
 
 type model struct {
-	client    *Client
-	tab       tabID
-	agents    []Agent
-	sessions  []ShellSession
-	cursor    int
-	filter    string
-	filtering bool
-	result    *Result
-	width     int
-	height    int
-	err       error
-	loading   bool
+	client      *Client
+	tab         tabID
+	agents      []Agent
+	sessions    []ShellSession
+	cursor      int
+	filter      string
+	filtering   bool
+	result      *Result
+	width       int
+	height      int
+	err         error
+	loading     bool
+	eventConn   *websocket.Conn
+	eventCtx    context.Context
+	eventCancel context.CancelFunc
 }
 
 // ── Messages ─────────────────────────────────────────────────────
@@ -46,6 +51,15 @@ type model struct {
 type agentsLoadedMsg []Agent
 type agentsErrMsg struct{ err error }
 type sessionsLoadedMsg []ShellSession
+
+// eventStreamMsg signals that an EventBus event was received requiring a data refresh.
+type eventStreamMsg struct {
+	channel string
+	evtType string
+}
+
+// eventStreamErrMsg signals that the event stream disconnected.
+type eventStreamErrMsg struct{ err error }
 
 func fetchAgents(client *Client) tea.Cmd {
 	return func() tea.Msg {
@@ -64,6 +78,42 @@ func fetchSessions(client *Client) tea.Cmd {
 			return sessionsLoadedMsg(nil)
 		}
 		return sessionsLoadedMsg(sessions)
+	}
+}
+
+// subscribeEventStream connects to the EventBus WebSocket and returns immediately
+// so subsequent events can be processed by listenEventStream.
+func subscribeEventStream(client *Client, ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		conn, err := client.DialEventStream(ctx, "agents,shell")
+		if err != nil {
+			return eventStreamErrMsg{err}
+		}
+		return eventStreamConnectedMsg{conn: conn}
+	}
+}
+
+// eventStreamConnectedMsg carries the established EventBus connection.
+type eventStreamConnectedMsg struct {
+	conn *websocket.Conn
+}
+
+// listenEventStream reads the next event from an established EventBus connection.
+func listenEventStream(conn *websocket.Conn, ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return eventStreamErrMsg{err}
+		}
+
+		var evt struct {
+			Channel string `json:"channel"`
+			Type    string `json:"type"`
+		}
+		if json.Unmarshal(data, &evt) == nil {
+			return eventStreamMsg{channel: evt.Channel, evtType: evt.Type}
+		}
+		return eventStreamMsg{}
 	}
 }
 
@@ -95,17 +145,28 @@ var (
 
 // Run launches the TUI agent/session browser. Returns the selected target.
 func Run(client *Client) (*Result, error) {
-	m := model{client: client, loading: true}
+	ctx, cancel := context.WithCancel(context.Background())
+	m := model{client: client, loading: true, eventCtx: ctx, eventCancel: cancel}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := p.Run()
 	if err != nil {
+		cancel()
 		return nil, err
 	}
-	return final.(model).result, nil
+	fm := final.(model)
+	fm.eventCancel()
+	if fm.eventConn != nil {
+		fm.eventConn.Close(websocket.StatusNormalClosure, "")
+	}
+	return fm.result, nil
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchAgents(m.client), fetchSessions(m.client))
+	return tea.Batch(
+		fetchAgents(m.client),
+		fetchSessions(m.client),
+		subscribeEventStream(m.client, m.eventCtx),
+	)
 }
 
 // ── Update ───────────────────────────────────────────────────────
@@ -129,6 +190,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case eventStreamConnectedMsg:
+		m.eventConn = msg.conn
+		return m, listenEventStream(m.eventConn, m.eventCtx)
+
+	case eventStreamMsg:
+		var cmds []tea.Cmd
+		cmds = append(cmds, m.handleEventRefresh(msg))
+		// Continue listening
+		if m.eventConn != nil {
+			cmds = append(cmds, listenEventStream(m.eventConn, m.eventCtx))
+		}
+		return m, tea.Batch(cmds...)
+
+	case eventStreamErrMsg:
+		// EventBus disconnected — silently fall back to manual refresh
+		m.eventConn = nil
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -141,6 +220,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateNav(msg)
 	}
 	return m, nil
+}
+
+// handleEventRefresh returns a tea.Cmd to refresh the appropriate data based on the event.
+func (m model) handleEventRefresh(evt eventStreamMsg) tea.Cmd {
+	switch evt.channel {
+	case "agents":
+		return fetchAgents(m.client)
+	case "shell":
+		return fetchSessions(m.client)
+	default:
+		return nil
+	}
 }
 
 func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

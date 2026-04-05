@@ -169,6 +169,7 @@ func (s *Server) buildRouter() chi.Router {
 	r.Get("/api/v1/events/stream", s.handleEventStream)
 	r.Get("/api/v1/agents/{agentId}/shell/new", s.handleShellSession)
 	r.Get("/api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws", s.handleShellAttach)
+	r.Get("/api/v1/agents/{agentId}/shell/sessions/{sessionId}/watch", s.handleShellWatch)
 	r.Get("/agent/v1/connect", s.handleAgentConnect)
 
 	// Binary upload endpoint (outside RequireJSON — sends octet-stream)
@@ -305,6 +306,8 @@ func (s *Server) buildRouter() chi.Router {
 				r.Get("/agents/{agentId}/shell/sessions/{sessionId}", s.handleGetShellSession)
 				r.Patch("/agents/{agentId}/shell/sessions/{sessionId}", s.handleUpdateShellSession)
 				r.Delete("/agents/{agentId}/shell/sessions/{sessionId}", s.handleTerminateShellSession)
+				r.Post("/agents/{agentId}/shell/sessions/{sessionId}/control", s.handleTakeControl)
+				r.Get("/agents/{agentId}/shell/sessions/{sessionId}/presence", s.handleSessionPresence)
 
 				// Shell recordings
 				r.Get("/recordings", s.handleListRecordings)
