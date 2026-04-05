@@ -159,7 +159,6 @@ var ValidCITokenScopes = map[string]bool{
 	"agents:read":   true,
 	"agents:write":  true,
 	"shell:execute": true,
-	"shell:watch":   true,
 	"shell:control": true,
 	"files:read":    true,
 	"files:write":   true,

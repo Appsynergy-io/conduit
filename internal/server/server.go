@@ -169,7 +169,6 @@ func (s *Server) buildRouter() chi.Router {
 	r.Get("/api/v1/events/stream", s.handleEventStream)
 	r.Get("/api/v1/agents/{agentId}/shell/new", s.handleShellSession)
 	r.Get("/api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws", s.handleShellAttach)
-	r.Get("/api/v1/agents/{agentId}/shell/sessions/{sessionId}/watch", s.handleShellWatch)
 	r.Get("/agent/v1/connect", s.handleAgentConnect)
 
 	// Binary upload endpoint (outside RequireJSON — sends octet-stream)

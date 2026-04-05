@@ -150,8 +150,10 @@ func (s *Server) handleShellSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleShellAttach handles a browser WebSocket connecting to an existing
-// shell session. Supports multi-client mode via ?mode=control|watch.
+// handleShellAttach handles a browser/CLI WebSocket connecting to an existing
+// shell session. All clients connect as controller — if another client
+// already holds control, the newcomer becomes a standby and must click
+// "Take Control" to claim the seat.
 //
 // GET /api/v1/agents/{agentId}/shell/sessions/{sessionId}/ws (WebSocket upgrade)
 func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
@@ -162,15 +164,6 @@ func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
 	claims, err := s.authenticateShellRequest(w, r)
 	if err != nil {
 		return // response already sent
-	}
-
-	// Parse mode (default: control)
-	mode := r.URL.Query().Get("mode")
-	if mode == "" {
-		mode = roleController
-	}
-	if mode != roleController && mode != roleWatcher {
-		mode = roleController
 	}
 
 	// Look up live session
@@ -185,7 +178,7 @@ func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authorization check (NIST AC-3, AC-6, OWASP API1)
-	if !s.authorizeSessionAccess(w, r, ls, claims, mode) {
+	if !s.authorizeSessionAccess(w, r, ls, claims) {
 		return // response already sent
 	}
 
@@ -203,56 +196,28 @@ func (s *Server) handleShellAttach(w http.ResponseWriter, r *http.Request) {
 		"session_id", sessionID,
 		"agent_id", agentID,
 		"user_id", claims.Subject,
-		"requested_mode", mode,
 	)
 
 	// Attach — blocks until client disconnects. AttachClient writes the
 	// initial session JSON with the EFFECTIVE role (which may be "watcher"
-	// if another client already holds control) and maintains the
-	// shell_session_clients audit record.
-	effectiveRole, err := s.sessionMgr.AttachClient(r.Context(), ls, conn, claims.Subject, mode)
+	// if another client already holds control — meaning "standby") and
+	// maintains the shell_session_clients audit record.
+	effectiveRole, err := s.sessionMgr.AttachClient(r.Context(), ls, conn, claims.Subject, roleController)
 	if err != nil {
 		s.logger.Debug("client attach ended", "session_id", sessionID, "error", err)
 	}
 
 	// Audit the attach using the EFFECTIVE role (NIST AU-2, AU-3)
-	eventType := "shell.attach"
-	if effectiveRole == roleWatcher {
-		eventType = "shell.session.watch.start"
-	}
 	s.db.InsertAuditLog(context.Background(), &db.AuditEntry{
 		ID:        uuid.NewString(),
 		TenantID:  claims.TenantID,
-		EventType: eventType,
+		EventType: "shell.attach",
 		UserID:    &claims.Subject,
 		AgentID:   &agentID,
 		SourceIP:  strPtr(r.RemoteAddr),
-		Details:   strPtr(fmt.Sprintf(`{"session_id":"%s","requested_mode":"%s","effective_role":"%s"}`, sessionID, mode, effectiveRole)),
+		Details:   strPtr(fmt.Sprintf(`{"session_id":"%s","effective_role":"%s"}`, sessionID, effectiveRole)),
 		Outcome:   "success",
 	})
-
-	if effectiveRole == roleWatcher {
-		s.db.InsertAuditLog(context.Background(), &db.AuditEntry{
-			ID:        uuid.NewString(),
-			TenantID:  claims.TenantID,
-			EventType: "shell.session.watch.end",
-			UserID:    &claims.Subject,
-			AgentID:   &agentID,
-			SourceIP:  strPtr(r.RemoteAddr),
-			Details:   strPtr(fmt.Sprintf(`{"session_id":"%s"}`, sessionID)),
-			Outcome:   "success",
-		})
-	}
-}
-
-// handleShellWatch handles a read-only WebSocket connection to watch a session.
-// GET /api/v1/agents/{agentId}/shell/sessions/{sessionId}/watch (WebSocket upgrade)
-func (s *Server) handleShellWatch(w http.ResponseWriter, r *http.Request) {
-	// Force watch mode by setting query param, then delegate to handleShellAttach
-	q := r.URL.Query()
-	q.Set("mode", roleWatcher)
-	r.URL.RawQuery = q.Encode()
-	s.handleShellAttach(w, r)
 }
 
 // handleTakeControl transfers terminal control to the requesting user.
@@ -273,7 +238,7 @@ func (s *Server) handleTakeControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authorization (NIST AC-3, AC-6)
-	if !s.authorizeSessionAccess(w, r, ls, claims, roleController) {
+	if !s.authorizeSessionAccess(w, r, ls, claims) {
 		return
 	}
 
@@ -340,7 +305,7 @@ func (s *Server) handleSessionPresence(w http.ResponseWriter, r *http.Request) {
 	// Authorization (NIST AC-3) — same as session read access
 	if ls.UserID != claims.Subject && !isAdmin(claims.Roles) {
 		if claims.Issuer == "conduit-ci-token" {
-			if !hasPermission(claims, "shell:execute") && !hasPermission(claims, "shell:watch") && !hasPermission(claims, "shell:control") {
+			if !hasPermission(claims, "shell:execute") && !hasPermission(claims, "shell:control") {
 				apierror.Forbidden(w, r, "Insufficient permissions.", nil)
 				return
 			}
@@ -359,10 +324,10 @@ func (s *Server) handleSessionPresence(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	watchers := make([]map[string]string, 0)
+	standbys := make([]map[string]string, 0)
 	for _, c := range ls.clients {
 		if c.Role == roleWatcher {
-			watchers = append(watchers, map[string]string{
+			standbys = append(standbys, map[string]string{
 				"userId":      c.UserID,
 				"connectedAt": c.JoinedAt.UTC().Format(time.RFC3339),
 			})
@@ -374,7 +339,7 @@ func (s *Server) handleSessionPresence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sessionId":   sessionID,
 		"controller":  controller,
-		"watchers":    watchers,
+		"standbys":    standbys,
 		"clientCount": clientCount,
 	})
 }
@@ -406,9 +371,11 @@ func (s *Server) authenticateShellRequest(w http.ResponseWriter, r *http.Request
 	return claims, nil
 }
 
-// authorizeSessionAccess checks if claims authorize access to a session in the given mode.
+// authorizeSessionAccess checks if claims authorize access to a session.
+// All clients connect as controller and may be demoted to standby if the
+// seat is taken; owner, admins, and shell:control CI tokens are allowed.
 // Returns true if authorized, false if error response was sent.
-func (s *Server) authorizeSessionAccess(w http.ResponseWriter, r *http.Request, ls *LiveSession, claims *auth.Claims, mode string) bool {
+func (s *Server) authorizeSessionAccess(w http.ResponseWriter, r *http.Request, ls *LiveSession, claims *auth.Claims) bool {
 	// Session owner always has access
 	if ls.UserID == claims.Subject {
 		return true
@@ -416,16 +383,8 @@ func (s *Server) authorizeSessionAccess(w http.ResponseWriter, r *http.Request, 
 
 	// CI token scope check
 	if claims.Issuer == "conduit-ci-token" {
-		if mode == roleController {
-			if !hasPermission(claims, "shell:control") {
-				apierror.Forbidden(w, r, "Insufficient permissions. Requires shell:control scope.", nil)
-				return false
-			}
-			return true
-		}
-		// Watch mode
-		if !hasPermission(claims, "shell:watch") && !hasPermission(claims, "shell:control") {
-			apierror.Forbidden(w, r, "Insufficient permissions. Requires shell:watch scope.", nil)
+		if !hasPermission(claims, "shell:control") {
+			apierror.Forbidden(w, r, "Insufficient permissions. Requires shell:control scope.", nil)
 			return false
 		}
 		return true
@@ -646,32 +605,35 @@ type browserResizeMsg struct {
 	Rows int    `json:"rows"`
 }
 
+// parseResizeDims parses a browser WebSocket resize command and returns
+// the validated cols/rows (bounded per OWASP API4). Returns ok=false for
+// anything that isn't a valid resize message.
+func parseResizeDims(data []byte) (cols, rows int, ok bool) {
+	// Quick check — resize messages are JSON starting with '{'
+	if len(data) == 0 || data[0] != '{' {
+		return 0, 0, false
+	}
+	var msg browserResizeMsg
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return 0, 0, false
+	}
+	if msg.Type != "resize" || msg.Cols <= 0 || msg.Rows <= 0 {
+		return 0, 0, false
+	}
+	if msg.Cols > 500 || msg.Rows > 500 {
+		return 0, 0, false
+	}
+	return msg.Cols, msg.Rows, true
+}
+
 // parseBrowserResize checks if a browser WebSocket message is a resize command.
 // Returns a SHELL_RESIZE frame if it is, nil otherwise.
 func parseBrowserResize(data []byte, streamID uint32) *protocol.Frame {
-	// Quick check — resize messages are JSON starting with '{'
-	if len(data) == 0 || data[0] != '{' {
+	cols, rows, ok := parseResizeDims(data)
+	if !ok {
 		return nil
 	}
-
-	var msg browserResizeMsg
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return nil
-	}
-
-	if msg.Type != "resize" || msg.Cols <= 0 || msg.Rows <= 0 {
-		return nil
-	}
-
-	// Enforce sane terminal bounds (OWASP API4)
-	if msg.Cols > 500 || msg.Rows > 500 {
-		return nil
-	}
-
-	payload := protocol.ShellResizePayload{
-		Cols: msg.Cols,
-		Rows: msg.Rows,
-	}
+	payload := protocol.ShellResizePayload{Cols: cols, Rows: rows}
 	f, err := protocol.NewFrame(protocol.FrameShellResize, streamID, payload)
 	if err != nil {
 		return nil

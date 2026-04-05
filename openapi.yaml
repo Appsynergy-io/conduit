@@ -1507,7 +1507,6 @@ paths:
                       - agents:read
                       - agents:write
                       - shell:execute
-                      - shell:watch
                       - shell:control
                       - files:read
                       - files:write
@@ -3589,32 +3588,36 @@ paths:
         terminal I/O. Works for both new sessions (status: active) and
         resuming detached sessions.
 
-        **Multi-client model:** A session supports one controller (read-write)
-        and unlimited watchers (read-only). The `mode` parameter selects the
-        connection role. When connecting with `mode=control` and another
-        controller is already attached, the existing controller is demoted to
-        watcher and notified via a `control_transferred` message.
+        **Multi-connection model:** A session has exactly one controller
+        (read-write). Additional connections from any allowed user attach as
+        standby clients — they do not receive PTY data and cannot send input.
+        Standby clients can request control via `{"type": "take_control"}`,
+        which demotes the existing controller to standby and replays the
+        session ring buffer to the new controller. The demoted controller
+        receives a `control_transferred` message and stays connected in
+        standby until they disconnect or take control back.
 
         **Authorization (NIST AC-3):**
-        - Session owner: always allowed (any mode)
-        - org_admin+: allowed for any session (any mode)
+        - Session owner: always allowed
+        - org_admin+: allowed for any session
         - org_member: own sessions only
-        - CI token: requires `shell:execute` scope (control own sessions),
-          `shell:watch` (watch any session), or `shell:control` (take control
-          of any session)
+        - CI token: requires `shell:execute` scope (own sessions) or
+          `shell:control` (take control of any session)
 
         **Attach flow:**
-        1. Client connects with a valid JWT and optional `mode` parameter
+        1. Client connects with a valid JWT
         2. Server verifies authorization (ownership or role-based access)
-        3. If session is detached: replays buffered output, transitions to active
-        4. Terminal I/O flows based on role (controller: bidirectional, watcher: output only)
+        3. If the controller seat is free: attach as controller, replay ring buffer
+        4. If another controller is attached: attach as standby, no PTY data forwarded
 
         **Detach flow:**
         When the last connected client's WebSocket closes (browser navigates away,
         network drop, explicit detach), the session transitions to `detached`
         status. The PTY remains alive on the agent and output is buffered in a
         ring buffer on the server. The session can be resumed from any platform
-        by connecting to this endpoint again.
+        by connecting to this endpoint again. If the controller disconnects but
+        standby clients remain, the first standby is auto-promoted to controller
+        and receives a ring buffer replay.
 
         **Pinned sessions:** Sessions with `pinned: true` never idle-timeout
         while detached. Non-pinned sessions close after `idleTimeout` seconds
@@ -3625,83 +3628,24 @@ paths:
         **Inbound messages (controller only):**
         - Binary data — raw terminal input (keystrokes)
         - `{"type": "resize", "cols": 120, "rows": 40}` — terminal resize
-        - `{"type": "take_control"}` — watcher requests control promotion
+        - `{"type": "take_control"}` — standby client requests control promotion
 
-        **Outbound messages (all clients):**
-        - Binary data — raw terminal output
-        - `{"type": "session", "sessionId": "...", "role": "controller"|"watcher"}` — initial session info
+        **Outbound messages (controller only receives PTY data):**
+        - Binary data — raw terminal output (controller only)
+        - `{"type": "session", "sessionId": "...", "role": "controller"|"watcher"}` — initial session info, sent to all clients
         - `{"type": "exit", "code": 0}` — session ended (PTY exited)
         - `{"type": "detached"}` — session detached (informational, sent before close)
         - `{"type": "control_transferred", "to": "<userId>"}` — sent to demoted controller
         - `{"type": "control_granted"}` — sent to new controller
-        - `{"type": "controller_changed", "userId": "..."}` — broadcast to all watchers
-        - `{"type": "watcher_joined", "userId": "...", "watcherCount": N}` — broadcast to all
-        - `{"type": "watcher_left", "userId": "...", "watcherCount": N}` — broadcast to all
       tags: [Shell]
       x-nist-controls: [AU-2, AU-3, AC-3, AC-6, AC-12]
       x-owasp: [A01, A03, API1, API5]
       parameters:
         - $ref: "#/components/parameters/PathAgentId"
         - $ref: "#/components/parameters/PathSessionId"
-        - name: mode
-          in: query
-          description: |
-            Connection mode. `control` (default) attaches with full I/O —
-            if another controller exists, they are demoted to watcher.
-            `watch` attaches as a read-only observer receiving terminal
-            output but unable to send input.
-          schema:
-            type: string
-            enum: [control, watch]
-            default: control
       responses:
         "101":
           description: WebSocket connection established, session attached
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /agents/{agentId}/shell/sessions/{sessionId}/watch:
-    get:
-      operationId: watchShellSession
-      summary: Watch a shell session (read-only WebSocket)
-      description: |
-        Upgrades to WebSocket and connects as a read-only watcher to a live
-        shell session. Receives all terminal output but cannot send input.
-        This is a convenience endpoint equivalent to connecting via the
-        `/ws` endpoint with `mode=watch`.
-
-        The session ring buffer is replayed on connect so the watcher sees
-        recent output history, then live output streams in real time.
-
-        **Authorization (NIST AC-3, AC-6):**
-        - Session owner: always allowed
-        - org_admin+: allowed for any session
-        - org_member: own sessions only
-        - CI token: requires `shell:watch` or `shell:control` scope
-
-        **Outbound messages:** Same as the `/ws` endpoint — binary terminal
-        output plus JSON control messages (`session`, `control_transferred`,
-        `controller_changed`, `watcher_joined`, `watcher_left`, `exit`).
-
-        **Inbound messages:** Only `{"type": "take_control"}` is accepted.
-        Binary input and resize commands are silently discarded for watchers.
-
-        **NIST AU-2:** Watch connect and disconnect events are logged to the
-        audit trail with the watcher's user ID, session ID, and timestamps.
-      tags: [Shell]
-      x-nist-controls: [AC-3, AC-6, AU-2, AU-3]
-      x-owasp: [A01, API1, API3, API5]
-      x-audit-event: shell.session.watch.start
-      parameters:
-        - $ref: "#/components/parameters/PathAgentId"
-        - $ref: "#/components/parameters/PathSessionId"
-      responses:
-        "101":
-          description: WebSocket connection established, watching session
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3715,13 +3659,13 @@ paths:
       summary: Take control of a shell session
       description: |
         Transfers terminal control to the requesting user. The current
-        controller (if any) is demoted to watcher and notified via a
+        controller (if any) is demoted to standby and notified via a
         WebSocket `control_transferred` message. Their connection remains
-        open in read-only mode.
+        open in standby mode (no PTY data forwarded, input discarded).
 
         The requesting user must already be connected to the session as a
-        watcher via the `/ws` or `/watch` WebSocket endpoint. If not
-        connected, returns 409 Conflict.
+        standby client via the `/ws` WebSocket endpoint. If not connected,
+        returns 409 Conflict.
 
         **Control transfer rules:**
         - Session owner can always reclaim control regardless of who holds it
@@ -3778,13 +3722,13 @@ paths:
       summary: Get session presence information
       description: |
         Returns information about who is currently connected to a shell
-        session, including the controller and all active watchers.
+        session, including the controller and all standby clients.
 
         **Authorization (NIST AC-3):**
         - Session owner: always allowed
         - org_admin+: allowed for any session
         - org_member: own sessions only
-        - CI token: requires `shell:execute`, `shell:watch`, or `shell:control` scope
+        - CI token: requires `shell:execute` or `shell:control` scope
 
         **NIST AU-3:** Response includes user IDs and connection timestamps
         for accountability and session awareness.
@@ -7050,7 +6994,7 @@ components:
         activeClients:
           type: array
           description: |
-            Currently connected clients (controller and watchers). Computed
+            Currently connected clients (controller and standby). Computed
             from in-memory state, only populated on live sessions. Empty
             array when session is detached or closed.
           items:
@@ -7100,7 +7044,7 @@ components:
               format: date-time
           required: [userId, connectedAt]
           additionalProperties: false
-        watchers:
+        standbys:
           type: array
           items:
             type: object
@@ -7116,11 +7060,11 @@ components:
                 type: string
                 format: date-time
             additionalProperties: false
-          description: Users connected in read-only watch mode
+          description: Users connected in standby mode (no PTY data, input discarded)
         clientCount:
           type: integer
           minimum: 0
-          description: Total connected clients (controller + watchers)
+          description: Total connected clients (controller + standby)
 
     ShellRecording:
       type: object

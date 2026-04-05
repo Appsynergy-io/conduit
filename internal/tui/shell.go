@@ -76,16 +76,16 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 
 	// Show subtle connect hint with role info
 	if role == "watcher" {
-		fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Conduit ── \x1b[34mWatching\x1b[90m ── Ctrl+] for commands ──\x1b[0m\r\n\r\n")
+		fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Conduit ── \x1b[33mStandby\x1b[90m ── Ctrl+] for commands ──\x1b[0m\r\n\r\n")
 	} else {
 		fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Conduit ── Ctrl+] for commands ──\x1b[0m\r\n\r\n")
 	}
 
 	done := make(chan struct{}, 1)
 	detached := false
-	var watching atomic.Bool
+	var standby atomic.Bool
 	if role == "watcher" {
-		watching.Store(true)
+		standby.Store(true)
 	}
 
 	// stdin → WebSocket (with Ctrl+] command prefix)
@@ -104,7 +104,7 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 				b := buf[i]
 				if b == ctrlRightBracket {
 					// Show command bar and wait for action
-					if watching.Load() {
+					if standby.Load() {
 						fmt.Fprintf(os.Stdout, "\r\n\x1b[7m Conduit \x1b[0m \x1b[97md\x1b[90m detach  \x1b[97mt\x1b[90m take control  \x1b[97mEsc\x1b[90m cancel\x1b[0m ")
 					} else {
 						fmt.Fprintf(os.Stdout, "\r\n\x1b[7m Conduit \x1b[0m \x1b[97md\x1b[90m detach  \x1b[97mp\x1b[90m pin  \x1b[97mEsc\x1b[90m cancel\x1b[0m ")
@@ -124,14 +124,14 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 						cancel()
 						return
 					case 'p':
-						if !watching.Load() {
+						if !standby.Load() {
 							fmt.Fprintf(os.Stdout, "\r\n")
 							go togglePin(client, agentID, sessionID)
 						} else {
 							fmt.Fprintf(os.Stdout, "\r\x1b[2K")
 						}
 					case 't':
-						if watching.Load() {
+						if standby.Load() {
 							fmt.Fprintf(os.Stdout, "\r\n")
 							// Send take_control over the existing WebSocket
 							takeMsg, _ := json.Marshal(map[string]string{"type": "take_control"})
@@ -145,8 +145,8 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 					}
 					continue
 				}
-				// Watchers: silently discard typed input
-				if !watching.Load() {
+				// Standby clients: silently discard typed input
+				if !standby.Load() {
 					out = append(out, b)
 				}
 			}
@@ -194,26 +194,14 @@ func RunShell(client *Client, agentID, resumeSessionID string) (*ShellResult, er
 					sessionID = sid
 				}
 				if r, ok := msg["role"].(string); ok {
-					watching.Store(r == "watcher")
+					standby.Store(r == "watcher")
 				}
 			case "control_granted":
-				watching.Store(false)
+				standby.Store(false)
 				fmt.Fprintf(os.Stdout, "\r\n\x1b[92m── You now have control ──\x1b[0m\r\n")
 			case "control_transferred":
-				watching.Store(true)
-				fmt.Fprintf(os.Stdout, "\r\n\x1b[93m── Control transferred to another user ──\x1b[0m\r\n")
-			case "watcher_joined":
-				count := 0
-				if c, ok := msg["watcherCount"].(float64); ok {
-					count = int(c)
-				}
-				fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Watcher joined (%d watching) ──\x1b[0m\r\n", count)
-			case "watcher_left":
-				count := 0
-				if c, ok := msg["watcherCount"].(float64); ok {
-					count = int(c)
-				}
-				fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Watcher left (%d watching) ──\x1b[0m\r\n", count)
+				standby.Store(true)
+				fmt.Fprintf(os.Stdout, "\r\n\x1b[93m── Control transferred to another connection ──\x1b[0m\r\n")
 			case "detached":
 				detached = true
 				fmt.Fprintf(os.Stdout, "\r\n\x1b[90m── Session detached ──\x1b[0m\r\n")
