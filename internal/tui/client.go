@@ -268,6 +268,38 @@ func (c *Client) ToggleSessionPin(agentID, sessionID string) (bool, error) {
 	return newPinned, nil
 }
 
+// DialEventStream opens a WebSocket connection to the EventBus for real-time updates.
+// Returns the connection. Caller is responsible for reading messages and closing.
+func (c *Client) DialEventStream(ctx context.Context, channels string) (*websocket.Conn, error) {
+	wsURL := strings.Replace(c.ServerURL, "https://", "wss://", 1)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = fmt.Sprintf("%s/api/v1/events/stream?channels=%s", wsURL, channels)
+
+	opts := &websocket.DialOptions{
+		Subprotocols: []string{"conduit-events-v1"},
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer " + c.Token},
+		},
+	}
+	if c.DevInsecure {
+		opts.HTTPClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+					MinVersion:         tls.VersionTLS12,
+				},
+			},
+		}
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL, opts)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to event stream: %w", err)
+	}
+
+	return conn, nil
+}
+
 // TerminateSession closes a shell session.
 func (c *Client) TerminateSession(agentID, sessionID string) error {
 	req, err := http.NewRequest("DELETE", c.ServerURL+"/api/v1/agents/"+agentID+"/shell/sessions/"+sessionID, nil)
