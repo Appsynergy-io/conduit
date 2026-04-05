@@ -214,7 +214,7 @@ func (s *Server) handlePollDeviceFlow(w http.ResponseWriter, r *http.Request) {
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
 		"tokenType":    "Bearer",
-		"expiresIn":    900,
+		"expiresIn":    int(s.jwtMgr.AccessTTL().Seconds()),
 		"user": map[string]interface{}{
 			"id":       user.ID,
 			"email":    user.Email,

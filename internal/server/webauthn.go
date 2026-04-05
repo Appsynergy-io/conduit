@@ -395,15 +395,16 @@ func (s *Server) handleWebAuthnLoginFinish(w http.ResponseWriter, r *http.Reques
 		},
 	})
 
-	// Set httpOnly cookie (NIST SC-23, OWASP V3)
-	setAuthCookie(w, accessToken, 900)
+	// Set httpOnly cookies (NIST SC-23, OWASP V3)
+	setAuthCookie(w, accessToken, int(s.jwtMgr.AccessTTL().Seconds()))
+	setRefreshCookie(w, refreshToken, int(s.jwtMgr.RefreshTTL().Seconds()))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
 		"tokenType":    "Bearer",
-		"expiresIn":    900,
+		"expiresIn":    int(s.jwtMgr.AccessTTL().Seconds()),
 		"user": map[string]any{
 			"id":       user.ID,
 			"email":    user.Email,

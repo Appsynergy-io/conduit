@@ -138,15 +138,16 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	// Set httpOnly cookie before writing the response body (NIST SC-23, OWASP V3)
-	setAuthCookie(w, accessToken, 900)
+	// Set httpOnly cookies before writing the response body (NIST SC-23, OWASP V3).
+	setAuthCookie(w, accessToken, int(s.jwtMgr.AccessTTL().Seconds()))
+	setRefreshCookie(w, refreshToken, int(s.jwtMgr.RefreshTTL().Seconds()))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
 		"tokenType":    "Bearer",
-		"expiresIn":    900,
+		"expiresIn":    int(s.jwtMgr.AccessTTL().Seconds()),
 		"user": map[string]any{
 			"id":       user.ID,
 			"email":    user.Email,
@@ -170,10 +171,33 @@ func setAuthCookie(w http.ResponseWriter, token string, maxAge int) {
 	})
 }
 
-// clearAuthCookie removes the httpOnly auth cookie by setting it to expire immediately.
-func clearAuthCookie(w http.ResponseWriter) {
+// setRefreshCookie sets the httpOnly refresh cookie (matches configured refresh token TTL).
+func setRefreshCookie(w http.ResponseWriter, token string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.RefreshCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// clearAuthCookies removes both auth and refresh cookies by setting them to
+// expire immediately.
+func clearAuthCookies(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     middleware.AuthCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.RefreshCookieName,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
@@ -214,8 +238,86 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	clearAuthCookie(w)
+	clearAuthCookies(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRefresh reads the httpOnly refresh cookie, validates the refresh JWT,
+// and issues a new access token + rotated refresh token as httpOnly cookies.
+// POST /api/v1/auth/refresh
+//
+// Public (no auth middleware) — the access cookie has expired, so Auth
+// middleware would reject it. The refresh cookie is the proof of identity.
+// NIST IA-11 (re-authentication), OWASP ASVS V3 (token rotation).
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(middleware.RefreshCookieName)
+	if err != nil || cookie.Value == "" {
+		apierror.Unauthorized(w, r, "Missing refresh token.", nil)
+		return
+	}
+
+	claims, err := s.jwtMgr.ValidateToken(cookie.Value)
+	if err != nil {
+		// Expired or tampered refresh token — must re-login.
+		clearAuthCookies(w)
+		apierror.Unauthorized(w, r, "Refresh token expired. Please sign in again.", nil)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify the user still exists and load their current role + services.
+	user, err := s.db.GetUserByID(ctx, claims.Subject)
+	if err != nil {
+		clearAuthCookies(w)
+		apierror.Unauthorized(w, r, "User not found.", nil)
+		return
+	}
+
+	services, err := s.db.ListServices(ctx, user.TenantID)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+	var serviceSlugs []string
+	for _, svc := range services {
+		if svc.EnabledAt != "" {
+			serviceSlugs = append(serviceSlugs, svc.Slug)
+		}
+	}
+
+	// Re-use existing session ID from the refresh token.
+	sessionID := claims.SessionID
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
+
+	// Issue fresh tokens (NIST IA-11 — token rotation on each refresh).
+	accessToken, err := s.jwtMgr.IssueAccessToken(
+		user.ID, user.TenantID, sessionID,
+		[]string{user.Role}, serviceSlugs,
+	)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	refreshToken, err := s.jwtMgr.IssueRefreshToken(user.ID, user.TenantID, sessionID)
+	if err != nil {
+		apierror.Internal(w, r, err)
+		return
+	}
+
+	// Refresh the DB session expiry.
+	_ = s.db.RefreshSession(ctx, sessionID)
+
+	setAuthCookie(w, accessToken, int(s.jwtMgr.AccessTTL().Seconds()))
+	setRefreshCookie(w, refreshToken, int(s.jwtMgr.RefreshTTL().Seconds()))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"expiresIn": int(s.jwtMgr.AccessTTL().Seconds()),
+	})
 }
 
 // findOrCreateSession looks for an existing non-expired session with matching
@@ -247,7 +349,7 @@ func (s *Server) findOrCreateSession(ctx context.Context, userID, tenantID, sess
 		Type:      sessType,
 		SourceIP:  strPtr(remoteAddr),
 		UserAgent: strPtr(userAgent),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
+		ExpiresAt: time.Now().UTC().Add(s.jwtMgr.RefreshTTL()).Format(time.RFC3339),
 	}
 	if err := s.db.CreateSession(ctx, session); err != nil {
 		return "", err

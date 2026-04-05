@@ -5,6 +5,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { refreshToken } from "@/lib/refresh"
 
 type TerminalStatus = "connecting" | "connected" | "disconnected" | "error" | "detached"
 type SessionRole = "controller" | "watcher"
@@ -39,6 +40,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
     const [status, setStatus] = useState<TerminalStatus>("connecting")
     const [pinned, setPinned] = useState(false)
     const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId ?? null)
+    const activeSessionIdRef = useRef<string | null>(sessionId ?? null)
     // Start optimistically as controller — the server corrects to "watcher"
     // (standby) via the initial session message if the seat is taken.
     const [role, setRole] = useState<SessionRole>("controller")
@@ -178,6 +180,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
                 case "session":
                   if (msg.sessionId) {
                     setActiveSessionId(msg.sessionId)
+                    activeSessionIdRef.current = msg.sessionId
                     onSessionReady?.(msg.sessionId)
                   }
                   if (msg.role) {
@@ -227,9 +230,45 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
 
         ws.onclose = (event) => {
           if (disposed) return
-          setStatus("disconnected")
-          term.write("\r\n\x1b[90m--- Session ended ---\x1b[0m\r\n")
-          if (event.code !== 1000) {
+          // Normal close (user terminated, server sent exit) — don't reconnect.
+          if (event.code === 1000) {
+            setStatus("disconnected")
+            term.write("\r\n\x1b[90m--- Session ended ---\x1b[0m\r\n")
+            return
+          }
+
+          // Abnormal close — likely token expiry or network glitch.
+          // Try silent refresh + reconnect to the same persistent session.
+          const sid = activeSessionIdRef.current
+          if (sid) {
+            setStatus("connecting")
+            term.write("\r\n\x1b[90m--- Reconnecting... ---\x1b[0m\r\n")
+            refreshToken().then((ok) => {
+              if (disposed) return
+              if (!ok) {
+                setStatus("disconnected")
+                term.write("\r\n\x1b[90m--- Session expired. Please log in again. ---\x1b[0m\r\n")
+                return
+              }
+              // Reconnect to the same session via the attach endpoint.
+              const reconnUrl =
+                `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(sid)}/ws`
+              const ws2 = new WebSocket(reconnUrl, "conduit-shell-v1")
+              ws2.binaryType = "arraybuffer"
+              wsRef.current = ws2
+              ws2.onopen = () => {
+                if (disposed) return
+                setStatus("connected")
+                term.write("\x1b[90m--- Reconnected ---\x1b[0m\r\n")
+                term.focus()
+              }
+              ws2.onmessage = ws.onmessage
+              ws2.onclose = ws.onclose
+              ws2.onerror = ws.onerror
+            })
+          } else {
+            setStatus("disconnected")
+            term.write("\r\n\x1b[90m--- Connection lost ---\x1b[0m\r\n")
             term.write(
               `\x1b[90m(code: ${event.code}${event.reason ? `, reason: ${event.reason}` : ""})\x1b[0m\r\n`,
             )
@@ -238,7 +277,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
 
         ws.onerror = () => {
           if (disposed) return
-          setStatus("error")
+          // Don't set status to error — let onclose handle reconnection.
         }
 
         // Terminal -> WebSocket (controller only — watchers silently discarded)

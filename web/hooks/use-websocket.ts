@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { refreshToken } from "@/lib/refresh"
 
 interface EventBusMessage {
   channel: string
@@ -35,6 +36,8 @@ export function useWebSocket(initialChannels?: EventChannel[]) {
   const activeChannels = useRef<Set<string>>(
     new Set(initialChannels ?? ALL_CHANNELS),
   )
+  // Track consecutive failures to avoid hammering the server.
+  const failCount = useRef(0)
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
@@ -46,6 +49,7 @@ export function useWebSocket(initialChannels?: EventChannel[]) {
 
     ws.onopen = () => {
       setConnected(true)
+      failCount.current = 0
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current)
         reconnectTimer.current = null
@@ -76,8 +80,18 @@ export function useWebSocket(initialChannels?: EventChannel[]) {
     ws.onclose = () => {
       setConnected(false)
       wsRef.current = null
-      // Reconnect after 2 seconds
-      reconnectTimer.current = setTimeout(connect, 2000)
+      failCount.current++
+
+      // Before reconnecting, try a silent token refresh. The connection may
+      // have been rejected because the access cookie expired (401 on upgrade).
+      const delay = Math.min(2000 * failCount.current, 10000)
+      reconnectTimer.current = setTimeout(async () => {
+        // Attempt refresh if we've failed — the access token likely expired.
+        if (failCount.current >= 1) {
+          await refreshToken()
+        }
+        connect()
+      }, delay)
     }
 
     ws.onerror = () => {

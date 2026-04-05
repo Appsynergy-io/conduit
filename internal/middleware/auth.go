@@ -13,6 +13,11 @@ import (
 // Uses __Host- prefix for strict cookie security (OWASP V3, NIST SC-23).
 const AuthCookieName = "__Host-conduit_token"
 
+// RefreshCookieName is the httpOnly cookie carrying the longer-lived refresh
+// token. The server reads it in POST /auth/refresh to issue new access + refresh
+// cookies without requiring a full re-authentication (NIST IA-11, OWASP V3).
+const RefreshCookieName = "__Host-conduit_refresh"
+
 // CITokenPrefix is the prefix for CI/automation tokens to distinguish from JWTs.
 const CITokenPrefix = "cdci_"
 
