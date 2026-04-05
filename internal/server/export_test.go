@@ -31,5 +31,7 @@ func (s *Server) RegisterAgentForTesting(agentID, tenantID, hostname string, mux
 
 // UnregisterAgentForTesting removes a fake connected agent from the registry (test helper).
 func (s *Server) UnregisterAgentForTesting(agentID string) {
-	s.agentRegistry.Unregister(agentID)
+	if a := s.agentRegistry.Get(agentID); a != nil {
+		s.agentRegistry.Unregister(a)
+	}
 }

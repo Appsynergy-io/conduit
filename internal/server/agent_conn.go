@@ -62,11 +62,23 @@ func (ar *AgentRegistry) Register(agent *ConnectedAgent) {
 	ar.mu.Unlock()
 }
 
-// Unregister removes a connected agent from the registry.
-func (ar *AgentRegistry) Unregister(agentID string) {
+// Unregister removes the given connection from the registry, but only if
+// that exact connection is still the one bound to the agent ID. A
+// reconnecting agent may have replaced the entry under the same ID
+// already, and the stale goroutine's cleanup must not evict the fresh
+// connection. Returns true if this connection was the active one that
+// was removed; false if it had already been superseded.
+func (ar *AgentRegistry) Unregister(agent *ConnectedAgent) bool {
+	if agent == nil {
+		return false
+	}
 	ar.mu.Lock()
-	delete(ar.agents, agentID)
-	ar.mu.Unlock()
+	defer ar.mu.Unlock()
+	if current, ok := ar.agents[agent.AgentID]; ok && current == agent {
+		delete(ar.agents, agent.AgentID)
+		return true
+	}
+	return false
 }
 
 // Count returns the number of connected agents.
@@ -135,17 +147,20 @@ func (s *Server) runAgentLoop(ctx context.Context, agent *ConnectedAgent, readEr
 		case <-pingTicker.C:
 			ping := &protocol.Frame{Type: protocol.FramePing}
 			if err := agent.Mux.Send(ctx, ping); err != nil {
-				s.logger.Debug("ping failed", "agent_id", agent.AgentID, "error", err)
+				s.logger.Info("agent loop exiting: ping send failed", "agent_id", agent.AgentID, "error", err)
 				return
 			}
 
 		case err := <-readErr:
 			if err != nil {
-				s.logger.Debug("agent read error", "agent_id", agent.AgentID, "error", err)
+				s.logger.Info("agent loop exiting: read error", "agent_id", agent.AgentID, "error", err)
+			} else {
+				s.logger.Info("agent loop exiting: read loop returned nil", "agent_id", agent.AgentID)
 			}
 			return
 
 		case <-ctx.Done():
+			s.logger.Info("agent loop exiting: context canceled", "agent_id", agent.AgentID, "error", ctx.Err())
 			return
 		}
 	}
@@ -387,9 +402,19 @@ func (s *Server) onAgentAuthenticated(ctx context.Context, cancel context.Cancel
 
 	s.runAgentLoop(ctx, connAgent, readErr)
 
-	// Agent disconnected — cleanup
+	// Agent loop ended — clean up only if THIS connection is still the
+	// active one for this agent ID. A reconnecting agent may have already
+	// replaced our entry; in that case the new connection owns the
+	// sessions, metrics and status, and the stale cleanup would wrongly
+	// tear them down.
+	wasActive := s.agentRegistry.Unregister(connAgent)
+	if !wasActive {
+		s.logger.Info("superseded agent connection ending — skipping cleanup",
+			"agent_id", agent.ID, "hostname", agent.Hostname, "transport", transport)
+		return
+	}
+
 	s.sessionMgr.CleanupAgentSessions(ctx, agent.ID)
-	s.agentRegistry.Unregister(agent.ID)
 	s.agentMetrics.Delete(agent.ID)
 	s.db.UpdateAgentStatus(ctx, agent.ID, "offline")
 
