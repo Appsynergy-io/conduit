@@ -22,10 +22,24 @@ func updateCmd() *cobra.Command {
 		Use:   "update",
 		Short: "Update the conduit binary from the server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Load agent config to get server URL
-			cfg, err := agent.LoadConfig(configPath)
-			if err != nil {
-				return fmt.Errorf("loading config: %w (have you run 'conduit join' first?)", err)
+			// Resolve server URL: prefer agent config (agent machines),
+			// fall back to CLI login credentials (developer machines).
+			var serverURL string
+			var devInsecure bool
+			var isAgent bool
+
+			cfg, agentErr := agent.LoadConfig(configPath)
+			if agentErr == nil {
+				serverURL = cfg.ServerURL
+				devInsecure = cfg.DevInsecure
+				isAgent = true
+			} else {
+				cred := getCredential("default")
+				if cred == nil {
+					return fmt.Errorf("no agent config and not logged in — run 'conduit join' (to install as agent) or 'conduit login' (CLI only) first")
+				}
+				serverURL = cred.ServerURL
+				devInsecure = cred.DevInsecure
 			}
 
 			// Resolve current binary path
@@ -44,12 +58,12 @@ func updateCmd() *cobra.Command {
 			}
 
 			downloadURL := fmt.Sprintf("%s/api/v1/download/agent?os=%s&arch=%s",
-				cfg.ServerURL, runtime.GOOS, runtime.GOARCH)
+				serverURL, runtime.GOOS, runtime.GOARCH)
 
-			fmt.Printf("Downloading update from %s...\n", cfg.ServerURL)
+			fmt.Printf("Downloading update from %s...\n", serverURL)
 
 			httpClient := &http.Client{Timeout: 120 * time.Second}
-			if cfg.DevInsecure {
+			if devInsecure {
 				httpClient.Transport = &http.Transport{
 					TLSClientConfig: &tls.Config{
 						InsecureSkipVerify: true,
@@ -95,11 +109,14 @@ func updateCmd() *cobra.Command {
 
 			fmt.Printf("Updated %s\n", binPath)
 
-			// Restart service if running
-			if restartErr := restartService(); restartErr != nil {
-				fmt.Printf("Restart service manually: %v\n", restartErr)
-			} else {
-				fmt.Println("Service restarted.")
+			// Only restart the agent service when running on a joined agent machine.
+			// CLI-only users have no service to restart.
+			if isAgent {
+				if restartErr := restartService(); restartErr != nil {
+					fmt.Printf("Restart service manually: %v\n", restartErr)
+				} else {
+					fmt.Println("Service restarted.")
+				}
 			}
 
 			return nil
