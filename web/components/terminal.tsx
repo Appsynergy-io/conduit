@@ -1,6 +1,6 @@
 "use client"
 
-import { ExternalLink, Eye, Pin, PinOff, X } from "lucide-react"
+import { ExternalLink, Hand, Pin, PinOff, X } from "lucide-react"
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,8 +14,6 @@ interface TerminalProps {
   agentHostname?: string
   /** If provided, attaches to an existing session instead of creating one */
   sessionId?: string
-  /** Connection mode: "control" (default) or "watch" (read-only) */
-  mode?: "control" | "watch"
   onClose?: () => void
   /** Called when session is created or attached, provides session ID for other controls */
   onSessionReady?: (sessionId: string) => void
@@ -31,16 +29,7 @@ export interface TerminalHandle {
 
 export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHeader?: boolean }>(
   function TerminalView(
-    {
-      agentId,
-      agentHostname,
-      sessionId,
-      mode = "control",
-      onClose,
-      onSessionReady,
-      onRoleChange,
-      hideHeader,
-    },
+    { agentId, agentHostname, sessionId, onClose, onSessionReady, onRoleChange, hideHeader },
     ref,
   ) {
     const termRef = useRef<HTMLDivElement>(null)
@@ -50,9 +39,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
     const [status, setStatus] = useState<TerminalStatus>("connecting")
     const [pinned, setPinned] = useState(false)
     const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId ?? null)
-    const [role, setRole] = useState<SessionRole>(mode === "watch" ? "watcher" : "controller")
-    const [watcherCount, setWatcherCount] = useState(0)
-    const roleRef = useRef<SessionRole>(mode === "watch" ? "watcher" : "controller")
+    // Start optimistically as controller — the server corrects to "watcher"
+    // (standby) via the initial session message if the seat is taken.
+    const [role, setRole] = useState<SessionRole>("controller")
+    const roleRef = useRef<SessionRole>("controller")
     const onRoleChangeRef = useRef(onRoleChange)
     useEffect(() => {
       onRoleChangeRef.current = onRoleChange
@@ -161,20 +151,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
         const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:"
         const { cols, rows } = term
 
-        let wsUrl: string
-        if (sessionId) {
-          // Reattach to existing session
-          const wsMode = mode === "watch" ? "watch" : "control"
-          if (mode === "watch") {
-            // Use dedicated watch endpoint
-            wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(sessionId)}/watch`
-          } else {
-            wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(sessionId)}/ws?mode=${wsMode}`
-          }
-        } else {
-          // Create new session (legacy path, handled by server)
-          wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/new?cols=${cols}&rows=${rows}`
-        }
+        const wsUrl = sessionId
+          ? `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/sessions/${encodeURIComponent(sessionId)}/ws`
+          : `${wsProtocol}//${window.location.host}/api/v1/agents/${encodeURIComponent(agentId)}/shell/new?cols=${cols}&rows=${rows}`
 
         const ws = new WebSocket(wsUrl, "conduit-shell-v1")
         ws.binaryType = "arraybuffer"
@@ -189,6 +168,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
         ws.onmessage = (event) => {
           if (disposed) return
           if (event.data instanceof ArrayBuffer) {
+            // Server only sends PTY data to the controller, so receiving
+            // binary here implies we hold control. Render it.
             term.write(new Uint8Array(event.data))
           } else if (typeof event.data === "string") {
             try {
@@ -200,18 +181,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
                     onSessionReady?.(msg.sessionId)
                   }
                   if (msg.role) {
-                    // If the user asked for control but the server granted
-                    // watcher (someone else already holds control), surface it
-                    // so they understand why input is disabled.
-                    if (
-                      mode !== "watch" &&
-                      msg.role === "watcher" &&
-                      roleRef.current !== "watcher"
-                    ) {
-                      term.write(
-                        `\r\n\x1b[93m--- Another user has control. Click "Take Control" to take over. ---\x1b[0m\r\n`,
-                      )
-                    }
                     updateRole(msg.role)
                   }
                   break
@@ -220,22 +189,31 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
                   term.write("\r\n\x1b[90m--- Session detached ---\x1b[0m\r\n")
                   break
                 case "control_transferred":
+                  // Another user took control — go to standby state.
                   updateRole("watcher")
-                  term.write(`\r\n\x1b[93m--- Control transferred to another user ---\x1b[0m\r\n`)
                   break
-                case "control_granted":
+                case "control_granted": {
+                  // We now hold control. Fit xterm to our container, then
+                  // explicitly push our current viewport size to the PTY —
+                  // fit() was already called on mount so it may be a no-op,
+                  // and onResize won't re-fire. The server follows with a
+                  // ring-buffer replay so we see recent session output.
                   updateRole("controller")
-                  term.write(`\r\n\x1b[92m--- You now have control ---\x1b[0m\r\n`)
+                  try {
+                    fitAddonRef.current?.fit()
+                  } catch {
+                    // ignore
+                  }
+                  const t = xtermRef.current
+                  if (t && ws.readyState === WebSocket.OPEN) {
+                    ws.send(
+                      new TextEncoder().encode(
+                        JSON.stringify({ type: "resize", cols: t.cols, rows: t.rows }),
+                      ),
+                    )
+                  }
                   break
-                case "controller_changed":
-                  // Informational for watchers
-                  break
-                case "watcher_joined":
-                  setWatcherCount(msg.watcherCount ?? 0)
-                  break
-                case "watcher_left":
-                  setWatcherCount(msg.watcherCount ?? 0)
-                  break
+                }
                 case "exit":
                   setStatus("disconnected")
                   term.write("\r\n\x1b[90m--- Session ended ---\x1b[0m\r\n")
@@ -283,6 +261,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
         })
 
         term.onResize(({ cols, rows }) => {
+          // Standby clients may also fit() on container resize to keep
+          // their xterm lined up visually, but only controllers drive the
+          // PTY. The server discards resize messages from non-controllers.
           if (roleRef.current === "watcher") return
           if (ws.readyState === WebSocket.OPEN) {
             const resizeMsg = JSON.stringify({ type: "resize", cols, rows })
@@ -291,7 +272,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
         })
 
         const resizeObserver = new ResizeObserver(() => {
-          if (fitAddonRef.current && xtermRef.current) {
+          if (!xtermRef.current) return
+          if (fitAddonRef.current) {
             try {
               fitAddonRef.current.fit()
             } catch {
@@ -316,7 +298,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
         cleanupObserver?.()
         cleanup()
       }
-    }, [agentId, sessionId, mode, cleanup, onSessionReady, updateRole])
+    }, [agentId, sessionId, cleanup, onSessionReady, updateRole])
 
     const takeControl = useCallback(() => {
       const ws = wsRef.current
@@ -332,16 +314,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
           <div className="flex items-center justify-between border-b px-4 py-2">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium">{agentHostname ?? agentId}</span>
-              <StatusBadge
-                status={status}
-                pinned={pinned}
-                role={role}
-                watcherCount={watcherCount}
-              />
+              <StatusBadge status={status} pinned={pinned} role={role} />
             </div>
             <div className="flex items-center gap-1">
               {role === "watcher" && status === "connected" && (
                 <Button variant="outline" size="sm" onClick={takeControl} className="h-7 text-xs">
+                  <Hand className="mr-1 h-3.5 w-3.5" />
                   Take Control
                 </Button>
               )}
@@ -397,7 +375,33 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalProps & { hideHea
             </div>
           </div>
         )}
-        <div ref={termRef} className="flex-1 bg-[#09090b] p-1" data-testid="terminal-container" />
+        <div className="relative flex-1 overflow-hidden">
+          <div
+            ref={termRef}
+            className={
+              role === "watcher"
+                ? "absolute inset-0 overflow-auto bg-[#09090b] p-1 pointer-events-none opacity-25 transition-opacity"
+                : "absolute inset-0 overflow-auto bg-[#09090b] p-1 transition-opacity"
+            }
+            data-testid="terminal-container"
+          />
+          {role === "watcher" && status === "connected" && (
+            <div
+              className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
+              data-testid="standby-overlay"
+            >
+              <div className="flex max-w-sm flex-col items-center gap-3 rounded-lg border bg-card px-6 py-5 text-center shadow-lg">
+                <p className="text-sm text-muted-foreground">
+                  Another connection has control of this session.
+                </p>
+                <Button onClick={takeControl} size="sm">
+                  <Hand className="mr-2 h-4 w-4" />
+                  Take Control
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     )
   },
@@ -407,12 +411,10 @@ function StatusBadge({
   status,
   pinned,
   role,
-  watcherCount,
 }: {
   status: TerminalStatus
   pinned: boolean
   role: SessionRole
-  watcherCount: number
 }) {
   switch (status) {
     case "connecting":
@@ -425,9 +427,8 @@ function StatusBadge({
       return (
         <div className="flex items-center gap-1.5">
           {role === "watcher" ? (
-            <Badge className="bg-blue-600 text-white text-xs">
-              <Eye className="mr-1 h-3 w-3" />
-              Watching
+            <Badge variant="secondary" className="text-xs">
+              Standby
             </Badge>
           ) : (
             <Badge className="bg-green-600 text-white text-xs">Connected</Badge>
@@ -435,12 +436,6 @@ function StatusBadge({
           {pinned && (
             <Badge variant="outline" className="text-xs">
               Pinned
-            </Badge>
-          )}
-          {watcherCount > 0 && role === "controller" && (
-            <Badge variant="outline" className="text-xs">
-              <Eye className="mr-1 h-3 w-3" />
-              {watcherCount}
             </Badge>
           )}
         </div>
