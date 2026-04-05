@@ -1,8 +1,10 @@
 "use client"
 
+import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
+import { formatDistanceToNow } from "date-fns"
 import {
-  Copy,
   Check,
+  Copy,
   Fingerprint,
   KeyRound,
   LogOut,
@@ -15,9 +17,7 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
-import { standardSchemaResolver } from "@hookform/resolvers/standard-schema"
 import { z } from "zod"
-import { formatDistanceToNow } from "date-fns"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,13 +30,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -269,10 +263,21 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!isAuthenticated) return
-    Promise.all([fetchProfile(), fetchSessions(), fetchPasskeys(), fetchCITokens(), fetchRecoveryCodeCount()]).finally(() =>
-      setLoading(false),
-    )
-  }, [isAuthenticated, fetchProfile, fetchSessions, fetchPasskeys, fetchCITokens, fetchRecoveryCodeCount])
+    Promise.all([
+      fetchProfile(),
+      fetchSessions(),
+      fetchPasskeys(),
+      fetchCITokens(),
+      fetchRecoveryCodeCount(),
+    ]).finally(() => setLoading(false))
+  }, [
+    isAuthenticated,
+    fetchProfile,
+    fetchSessions,
+    fetchPasskeys,
+    fetchCITokens,
+    fetchRecoveryCodeCount,
+  ])
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -393,7 +398,10 @@ export default function SettingsPage() {
   }
 
   async function generateRecoveryCodes() {
-    const res = await fetch("/api/v1/auth/recovery/generate", { method: "POST" })
+    const res = await fetch("/api/v1/auth/recovery/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    })
     if (res.ok) {
       const data = await res.json()
       setRecoveryCodes(data.codes ?? [])
@@ -602,7 +610,7 @@ export default function SettingsPage() {
               <CardTitle>Recovery Codes</CardTitle>
             </div>
             <Button variant="outline" size="sm" onClick={generateRecoveryCodes}>
-              <RefreshCw className="mr-1 h-4 w-4" /> Regenerate
+              <RefreshCw className="mr-1 h-4 w-4" /> {recoveryCodeCount ? "Regenerate" : "Generate"}
             </Button>
           </div>
           <CardDescription>
@@ -615,11 +623,12 @@ export default function SettingsPage() {
             <p className="text-sm text-muted-foreground">Loading...</p>
           ) : recoveryCodeCount === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No recovery codes generated. Click Regenerate to create backup codes.
+              No recovery codes generated. Click Generate to create backup codes.
             </p>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {recoveryCodeCount} unused recovery code{recoveryCodeCount !== 1 ? "s" : ""} remaining.
+              {recoveryCodeCount} unused recovery code{recoveryCodeCount !== 1 ? "s" : ""}{" "}
+              remaining.
             </p>
           )}
         </CardContent>
@@ -637,7 +646,9 @@ export default function SettingsPage() {
               <RefreshCw className="mr-1 h-4 w-4" /> Refresh
             </Button>
           </div>
-          <CardDescription>Devices and clients currently signed in to your account.</CardDescription>
+          <CardDescription>
+            Devices and clients currently signed in to your account.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {sessions.length === 0 ? (
@@ -724,13 +735,15 @@ export default function SettingsPage() {
                       <TableRow key={tok.id}>
                         <TableCell className="font-medium">{tok.name}</TableCell>
                         <TableCell className="hidden sm:table-cell">
-                          {tok.scopes?.length > 0
-                            ? tok.scopes.map((s) => (
-                                <Badge key={s} variant="secondary" className="mr-1">
-                                  {s}
-                                </Badge>
-                              ))
-                            : <span className="text-muted-foreground">all</span>}
+                          {tok.scopes?.length > 0 ? (
+                            tok.scopes.map((s) => (
+                              <Badge key={s} variant="secondary" className="mr-1">
+                                {s}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-muted-foreground">all</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {formatDistanceToNow(new Date(tok.createdAt), { addSuffix: true })}
@@ -897,11 +910,7 @@ export default function SettingsPage() {
               </DialogHeader>
               <div className="flex items-center gap-2 rounded-md border bg-muted p-3">
                 <code className="flex-1 break-all text-sm">{createdCIToken}</code>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => copyToClipboard(createdCIToken)}
-                >
+                <Button variant="ghost" size="icon" onClick={() => copyToClipboard(createdCIToken)}>
                   {copiedToken ? (
                     <Check className="h-4 w-4 text-green-500" />
                   ) : (
@@ -968,7 +977,10 @@ export default function SettingsPage() {
       </Dialog>
 
       {/* Recovery codes dialog */}
-      <Dialog open={showRecoveryCodes} onOpenChange={(open) => !open && setShowRecoveryCodes(false)}>
+      <Dialog
+        open={showRecoveryCodes}
+        onOpenChange={(open) => !open && setShowRecoveryCodes(false)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Recovery Codes</DialogTitle>
@@ -984,10 +996,7 @@ export default function SettingsPage() {
             ))}
           </div>
           <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => copyToClipboard(recoveryCodes.join("\n"))}
-            >
+            <Button variant="outline" onClick={() => copyToClipboard(recoveryCodes.join("\n"))}>
               {copiedToken ? (
                 <>
                   <Check className="mr-1 h-4 w-4" /> Copied

@@ -12,9 +12,14 @@ import (
 
 	"github.com/appsynergy-io/conduit/internal/apierror"
 	"github.com/appsynergy-io/conduit/internal/auth"
+	"github.com/appsynergy-io/conduit/internal/captcha"
 	"github.com/appsynergy-io/conduit/internal/db"
 	"github.com/appsynergy-io/conduit/internal/middleware"
 )
+
+// recoveryVerifyEndpoint is the path the CAPTCHA is bound to. Must match the
+// allowlist in captcha.go:isCaptchaGatedEndpoint.
+const recoveryVerifyEndpoint = "/auth/recovery/verify"
 
 const recoveryCodeCount = 10
 
@@ -101,8 +106,9 @@ func (s *Server) handleRecoveryCodeCount(w http.ResponseWriter, r *http.Request)
 
 // recoveryVerifyRequest is the request body for POST /api/v1/auth/recovery/verify.
 type recoveryVerifyRequest struct {
-	Email string `json:"email"`
-	Code  string `json:"code"`
+	Email   string             `json:"email"`
+	Code    string             `json:"code"`
+	Captcha *captcha.Solution  `json:"captcha"`
 }
 
 // handleVerifyRecoveryCode verifies a recovery code and returns a scoped JWT.
@@ -123,6 +129,20 @@ func (s *Server) handleVerifyRecoveryCode(w http.ResponseWriter, r *http.Request
 	if req.Email == "" || req.Code == "" {
 		// Identical error — no enumeration (OWASP A07)
 		apierror.Unauthorized(w, r, "Invalid email or recovery code.", nil)
+		return
+	}
+
+	// Verify CAPTCHA first — gates access before we touch the user DB, preventing
+	// enumeration timing attacks and bot-driven credential stuffing (NIST SC-5).
+	// Identical error for any CAPTCHA failure mode.
+	if req.Captcha == nil {
+		apierror.Unauthorized(w, r, "Invalid email or recovery code.", nil)
+		s.auditRecoveryFailure(r, nil, &req.Email, "missing captcha")
+		return
+	}
+	if err := s.captchaVerifier.Verify(req.Captcha, recoveryVerifyEndpoint); err != nil {
+		apierror.Unauthorized(w, r, "Invalid email or recovery code.", nil)
+		s.auditRecoveryFailure(r, nil, &req.Email, "captcha failed: "+err.Error())
 		return
 	}
 

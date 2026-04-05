@@ -19,14 +19,17 @@ func TestGenerateRecoveryCodes_Format(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, code := range codes {
-		// Format: xxxx-xxxx (9 chars total)
-		assert.Len(t, code, 9, "code should be 9 characters: %s", code)
-		assert.Equal(t, "-", string(code[4]), "code should have dash at position 4: %s", code)
+		// Format: xxxx-xxxx-xxxx-xxxx (16 alphabet chars + 3 dashes = 19)
+		assert.Len(t, code, 19, "code should be 19 characters: %s", code)
+		assert.Equal(t, "-", string(code[4]), "dash expected at position 4: %s", code)
+		assert.Equal(t, "-", string(code[9]), "dash expected at position 9: %s", code)
+		assert.Equal(t, "-", string(code[14]), "dash expected at position 14: %s", code)
 
-		// Both halves should only contain characters from the alphabet
-		left := code[:4]
-		right := code[5:]
-		for _, c := range left + right {
+		// Every non-dash character must be in the alphabet.
+		for i, c := range code {
+			if i == 4 || i == 9 || i == 14 {
+				continue
+			}
 			assert.True(t, strings.ContainsRune(recoveryCodeAlphabet, c),
 				"character %c not in alphabet: %s", c, code)
 		}
