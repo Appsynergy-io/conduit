@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"log/slog"
@@ -80,11 +82,14 @@ func run(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("parsing JWT refresh TTL: %w", err)
 	}
 
-	// Create JWT manager (generates Ed25519 keypair)
-	jwtMgr, err := auth.NewJWTManager("conduit-server", accessTTL, refreshTTL)
+	// Load or generate the persistent Ed25519 JWT signing key. Persisting the
+	// key is required so that user access/refresh tokens survive server
+	// restarts (NIST SC-12: key management).
+	jwtPrivKey, err := loadOrCreateJWTKey(ctx, database, logger)
 	if err != nil {
-		return fmt.Errorf("creating JWT manager: %w", err)
+		return fmt.Errorf("loading JWT signing key: %w", err)
 	}
+	jwtMgr := auth.NewJWTManagerFromKey(jwtPrivKey, "conduit-server", accessTTL, refreshTTL)
 
 	// TLS config
 	var tlsCfg *tls.Config
@@ -173,4 +178,31 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	logger.InfoContext(context.Background(), "shutdown complete")
 	return nil
+}
+
+// loadOrCreateJWTKey returns the persisted Ed25519 private key used for
+// signing JWTs, generating and persisting a new one the first time the
+// server starts.
+func loadOrCreateJWTKey(ctx context.Context, database *db.DB, logger *slog.Logger) (ed25519.PrivateKey, error) {
+	stored, err := database.GetServerKey(ctx, db.ServerKeyJWTEd25519)
+	if err != nil {
+		return nil, fmt.Errorf("reading JWT key: %w", err)
+	}
+	if len(stored) == ed25519.PrivateKeySize {
+		logger.InfoContext(ctx, "loaded existing JWT signing key from database")
+		return ed25519.PrivateKey(stored), nil
+	}
+	if stored != nil {
+		return nil, fmt.Errorf("stored JWT key has invalid length: got %d, want %d", len(stored), ed25519.PrivateKeySize)
+	}
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generating Ed25519 keypair: %w", err)
+	}
+	if err := database.SaveServerKey(ctx, db.ServerKeyJWTEd25519, priv); err != nil {
+		return nil, fmt.Errorf("persisting JWT key: %w", err)
+	}
+	logger.InfoContext(ctx, "generated and persisted new JWT signing key")
+	return priv, nil
 }
