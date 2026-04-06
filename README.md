@@ -100,6 +100,14 @@ CGO_ENABLED=0 go build -o conduit ./cmd/conduit
 | [`CLAUDE.md`](CLAUDE.md) | Everything — security standards, product spec, DB schema, coding rules |
 | [`openapi.yaml`](openapi.yaml) | API contract — endpoint shapes, schemas, NIST/OWASP annotations |
 
+## Licensing
+
+- Source-available under [`LICENSE`](LICENSE): Business Source License 1.1 with a 4-year Apache 2.0 conversion
+- Internal production use is free only for organizations below the license's stated revenue threshold
+- Commercial hosted-service and managed-service offerings are not permitted without separate written permission
+- Contributor terms are in [`CLA.md`](CLA.md)
+- Contributor protections and project governance are in [`GOVERNANCE.md`](GOVERNANCE.md)
+
 ---
 
 ## Implementation Status
