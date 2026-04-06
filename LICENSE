@@ -1,0 +1,106 @@
+Conduit Community Edition License
+
+Licensor: the copyright holder(s) for the Licensed Work.
+Licensed Work: Conduit Community Edition, including all source code,
+documentation, configuration, build files, assets, and other material made
+available in this repository.
+
+License Text Copyright (c) 2017 MariaDB Corporation Ab, All Rights Reserved.
+This license uses the Business Source License 1.1 form with the parameters
+below.
+
+Parameters
+
+Licensor: the copyright holder(s) for the Licensed Work.
+
+Licensed Work: Conduit Community Edition, including each version first publicly
+distributed by Licensor.
+
+Additional Use Grant:
+
+You may make production use of the Licensed Work only if all of the following
+conditions are satisfied:
+
+1. You are not providing the Licensed Work, or any derivative of it, to third
+parties as a hosted service, managed service, OEM offering, white-label
+offering, outsourced service, or any similar commercial offering that derives a
+material part of its value from the Licensed Work.
+2. Your organization and all affiliated entities together had less than
+USD $10,000,000 in gross annual revenue in the most recently completed fiscal
+year.
+3. You do not sell, sublicense, rent, lease, or otherwise commercially exploit
+the Licensed Work itself except under a separate written commercial agreement
+with Licensor.
+
+For clarity:
+
+- personal use, evaluation, testing, development, security research, and other
+non-production use are permitted under this license;
+- internal production use above the revenue threshold is not permitted under
+this license and requires a separate commercial agreement with Licensor;
+- any hosted or managed-service use requires a separate commercial agreement
+with Licensor regardless of revenue.
+
+Change Date: the fourth anniversary of the date each version of the Licensed
+Work is first publicly distributed by Licensor.
+
+Change License: Apache License, Version 2.0.
+
+Business Source License 1.1
+
+Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative
+works, redistribute, and make non-production use of the Licensed Work. The
+Licensor may make an Additional Use Grant, above, permitting limited production
+use.
+
+Effective on the Change Date, or the fourth anniversary of the first publicly
+available distribution of a specific version of the Licensed Work under this
+License, whichever comes first, the Licensor hereby grants you rights under the
+terms of the Change License, and the rights granted in the paragraph above
+terminate.
+
+If your use of the Licensed Work does not comply with the requirements
+currently in effect as described in this License, you must purchase a
+commercial license from the Licensor, or immediately cease using the Licensed
+Work.
+
+All copies of the original and modified Licensed Work, and derivative works of
+the Licensed Work, are subject to this License. This License applies separately
+for each version of the Licensed Work and the Change Date may vary for each
+version of the Licensed Work released by Licensor.
+
+You must conspicuously display this License on each original or modified copy
+of the Licensed Work. If you receive the Licensed Work in original or modified
+form from a third party, the terms and conditions set forth in this License
+apply to your use of that work.
+
+Any use of the Licensed Work in violation of this License will automatically
+terminate your rights under this License for the current and all other versions
+of the Licensed Work.
+
+This License does not grant you any right in Licensor's or any other party's
+names, logos, or trademarks.
+
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSED WORK IS PROVIDED ON AN
+"AS IS" BASIS. LICENSOR HEREBY DISCLAIMS ALL WARRANTIES AND CONDITIONS, EXPRESS
+OR IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AND TITLE.
+
+MariaDB hereby grants you permission to use this License's text to license your
+works, and to refer to it using the name "Business Source License", as long as
+you comply with the Covenants of Licensor in the Business Source License 1.1.
+
+Covenants of Licensor in the Business Source License 1.1
+
+By using this License, the Licensor covenants that for any Change Date and
+Change License specified above, the Licensor will not modify the terms of this
+License with respect to the applicable version of the Licensed Work as of the
+date the Licensed Work is first publicly distributed under this License.
+
+The Licensor covenants that each version of the Licensed Work first publicly
+distributed under this License will have its own Change Date and Change
+License, and that once a version is first publicly distributed under this
+License, the Change Date and Change License for that version will not be
+changed.
